@@ -1,0 +1,11 @@
+// src/routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const { addSalesByOwner, getTenantSalesList, deleteSales } = require('../controllers/salesController');
+const { authenticateToken } = require("../middleware/authMiddleware");
+
+router.post('/sales', authenticateToken, addSalesByOwner);
+router.get('/sales/list', authenticateToken, getTenantSalesList);
+router.delete('/sales/:id', authenticateToken, deleteSales);
+
+module.exports = router;

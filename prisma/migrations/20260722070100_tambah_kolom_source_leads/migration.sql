@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "EventType" ADD VALUE 'WAITING';
+
+-- AlterTable
+ALTER TABLE "leads" ADD COLUMN     "sourceLeads" VARCHAR(50) NOT NULL DEFAULT 'WHATSAPP_BOT';
