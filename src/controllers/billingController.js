@@ -2,61 +2,27 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // 1. Mengambil pengaturan harga & daftar durasi paket
-async function getBillingPlans(req, res) {
-  try {
-    const tenantId = req.user?.tenantId;
-
-    const [setting, plans, pendingTransaction] = await Promise.all([
-      prisma.billingSetting.findUnique({ where: { settingId: "DEFAULT_BILLING" } }),
-      prisma.subscriptionPlan.findMany({
-        where: { isActive: true },
-        orderBy: { sortOrder: "asc" },
-      }),
-      tenantId
-        ? prisma.paymentTransaction.findFirst({
-            where: { tenantId, status: "PENDING" },
-            orderBy: { createdAt: "desc" },
-          })
-        : null,
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      pendingTransaction, // <-- Dikirim langsung ke BillingModal
-      setting: setting || {
-        pricePerSales: 75000,
-        bankName: "BCA a.n. Mohammad Munir",
-        bankAccount: "8820941765",
-        qrisImageUrl: "/qris-pembayaran.png",
-        adminWaNumber: "628558836680",
-      },
-      plans:
-        plans.length > 0
-          ? plans
-          : [
-              { planId: "1M", name: "1 Bulan", months: 1, discount: 0, badge: null },
-              { planId: "3M", name: "3 Bulan", months: 3, discount: 0.1, badge: "HEMAT 10%" },
-              { planId: "1Y", name: "1 Tahun", months: 12, discount: 0.2, badge: "HEMAT 20%" },
-            ],
-    });
-  } catch (error) {
-    console.error("🚨 Gagal memuat paket billing:", error);
-    return res.status(500).json({ success: false, message: "Gagal memuat data paket." });
-  }
-}
-
 // async function getBillingPlans(req, res) {
 //   try {
-//     const [setting, plans] = await Promise.all([
+//     const tenantId = req.user?.tenantId;
+
+//     const [setting, plans, pendingTransaction] = await Promise.all([
 //       prisma.billingSetting.findUnique({ where: { settingId: "DEFAULT_BILLING" } }),
 //       prisma.subscriptionPlan.findMany({
 //         where: { isActive: true },
 //         orderBy: { sortOrder: "asc" },
 //       }),
+//       tenantId
+//         ? prisma.paymentTransaction.findFirst({
+//             where: { tenantId, status: "PENDING" },
+//             orderBy: { createdAt: "desc" },
+//           })
+//         : null,
 //     ]);
 
 //     return res.status(200).json({
 //       success: true,
+//       pendingTransaction, // <-- Dikirim langsung ke BillingModal
 //       setting: setting || {
 //         pricePerSales: 75000,
 //         bankName: "BCA a.n. Mohammad Munir",
@@ -78,6 +44,75 @@ async function getBillingPlans(req, res) {
 //     return res.status(500).json({ success: false, message: "Gagal memuat data paket." });
 //   }
 // }
+
+async function getBillingPlans(req, res) {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    const [setting, plans, pendingTransaction, activeSalesCount, tenantInfo] =
+      await Promise.all([
+        prisma.billingSetting.findUnique({ where: { settingId: "DEFAULT_BILLING" } }),
+        prisma.subscriptionPlan.findMany({
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
+        }),
+        tenantId
+          ? prisma.paymentTransaction.findFirst({
+              where: { tenantId, status: "PENDING" },
+              orderBy: { createdAt: "desc" },
+            })
+          : null,
+        // ✅ Hitung jumlah akun SALES yang aktif secara real-time di database
+        tenantId
+          ? prisma.user.count({
+              where: {
+                tenantId,
+                role: "SALES",
+                isActive: true,
+              },
+            })
+          : 0,
+        // ✅ Ambil tenantCode & businessName terbaru agar tidak kosong saat konfirmasi WA
+        tenantId
+          ? prisma.tenant.findUnique({
+              where: { tenantId },
+              select: {
+                tenantId: true,
+                tenantCode: true,
+                businessName: true,
+                maxSales: true,
+              },
+            })
+          : null,
+      ]);
+
+    return res.status(200).json({
+      success: true,
+      pendingTransaction,
+      activeSalesCount, // <-- Dikirim ke BillingModal agar angka "Sales aktif saat ini" akurat
+      tenant: tenantInfo, // <-- Memastikan tenantCode (OB-MTR-xxxx) selalu terisi di pesan invoice WA
+      setting: setting || {
+        pricePerSales: 85000,
+        bankName: "BCA a.n. Mohammad Munir",
+        bankAccount: "8820941765",
+        qrisImageUrl: "/qris-pembayaran.png",
+        adminWaNumber: "628558836680",
+      },
+      plans:
+        plans.length > 0
+          ? plans
+          : [
+              { planId: "1M", name: "1 Bulan", months: 1, discount: 0, badge: null },
+              { planId: "3M", name: "3 Bulan", months: 3, discount: 0.1, badge: "HEMAT 10%" },
+              { planId: "1Y", name: "1 Tahun", months: 12, discount: 0.2, badge: "HEMAT 20%" },
+            ],
+    });
+  } catch (error) {
+    console.error("🚨 Gagal memuat paket billing:", error);
+    return res.status(500).json({ success: false, message: "Gagal memuat data paket." });
+  }
+}
+
 
 // 2. Mencatat invoice pesanan baru (Siap untuk Manual maupun Midtrans nanti)
 async function createCheckoutTransaction(req, res) {
@@ -163,71 +198,6 @@ async function createCheckoutTransaction(req, res) {
     return res.status(500).json({ success: false, message: "Gagal membuat invoice pembayaran." });
   }
 }
-
-// async function createCheckoutTransaction(req, res) {
-//   try {
-//     const tenantId = req.user?.tenantId || req.body.tenantId;
-//     const { salesQuota, planId, paymentMethod = "MANUAL" } = req.body;
-
-//     if (!tenantId || !salesQuota || salesQuota < 1) {
-//       return res.status(400).json({ success: false, message: "Data pesanan tidak valid." });
-//     }
-
-//     const setting = await prisma.billingSetting.findUnique({
-//       where: { settingId: "DEFAULT_BILLING" },
-//     });
-
-//     const pricePerSales = setting?.pricePerSales || 49000;
-
-//     let months = 1;
-//     let discount = 0;
-
-//     const dbPlan = await prisma.subscriptionPlan.findUnique({ where: { planId } }).catch(() => null);
-
-//     if (dbPlan) {
-//       months = dbPlan.months;
-//       discount = dbPlan.discount;
-//     } else if (planId === "3M") {
-//       months = 3;
-//       discount = 0.1;
-//     } else if (planId === "1Y") {
-//       months = 12;
-//       discount = 0.2;
-//     }
-
-//     const rawTotal = salesQuota * pricePerSales * months;
-//     const amount = Math.round(rawTotal * (1 - discount));
-//     const orderId = `INV-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-
-//     const transaction = await prisma.paymentTransaction.create({
-//       data: {
-//         orderId,
-//         tenantId,
-//         salesQuota: Number(salesQuota),
-//         months,
-//         amount,
-//         paymentMethod,
-//         status: "PENDING",
-//       },
-//       include: {
-//         tenant: {
-//           select: {
-//             tenantCode: true,
-//             businessName: true,
-//           },
-//         },
-//       },
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       transaction,
-//     });
-//   } catch (error) {
-//     console.error("🚨 Gagal membuat transaksi billing:", error);
-//     return res.status(500).json({ success: false, message: "Gagal membuat invoice pembayaran." });
-//   }
-// }
 
 // 3. Menyetujui pembayaran & menyesuaikan kuota akun sales otomatis
 async function approveTransaction(req, res) {

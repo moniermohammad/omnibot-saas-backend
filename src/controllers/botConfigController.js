@@ -314,11 +314,13 @@ async function getWhatsAppGroups(req, res) {
     // Ambil socket aktif dari RAM menggunakan helper yang sudah kamu buat
     const socket = getSocketByTenant(targetTenantId);
 
-    // Pastikan bot dalam kondisi ONLINE dan terautentikasi
+    // ✅ Kembalikan status 200 dengan array kosong agar console browser bersih saat bot offline
     if (!socket || !socket.user) {
-      return res.status(503).json({
-        success: false,
-        message: "⚠️ Bot WhatsApp belum terhubung (OFFLINE). Silakan hubungkan bot terlebih dahulu.",
+      return res.status(200).json({
+        success: true,
+        connected: false,
+        data: [],
+        message: "Bot WhatsApp belum terhubung (OFFLINE).",
       });
     }
 
@@ -335,6 +337,7 @@ async function getWhatsAppGroups(req, res) {
 
     return res.status(200).json({
       success: true,
+      connected: true,
       data: groupList,
     });
   } catch (error) {
@@ -345,6 +348,7 @@ async function getWhatsAppGroups(req, res) {
     });
   }
 }
+
 
 module.exports = {
   checkBotStatus,

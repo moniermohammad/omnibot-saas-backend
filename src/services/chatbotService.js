@@ -5,7 +5,9 @@ async function getConfig(tenantId) {
     return await prisma.aiBotConfig.findUnique({
       where: { tenantId },
       include: { 
-        subjects: true
+        subjects: {
+          orderBy: { orderIndex: 'asc' }
+        }
       } 
     });
   } catch (error) {
@@ -14,30 +16,27 @@ async function getConfig(tenantId) {
   }
 }
 
+
 /**
  * 💾 Simpan atau Update Data Konfigurasi AI Global dengan Skema Overwrite Otomatis
  */
 async function saveChatbotConfig(tenantId, configData) {
-  // ✅ 1. Ambil salesGroupJid dari configData
-  const { openingMessage, closingMessage, keywordTrigger, salesGroupJid, subjects } = configData;
+  const { openingMessage, keywordTrigger, salesGroupJid, subjects } = configData;
 
   try {
     return await prisma.$transaction(async (tx) => {
       
-      // A. Upsert konfigurasi utama
+      // A. Upsert konfigurasi utama (tanpa closingMessage)
       const config = await tx.aiBotConfig.upsert({
         where: { tenantId },
-        // ✅ 2. Masukkan salesGroupJid ke dalam update dan create
         update: { 
           openingMessage, 
-          closingMessage, 
           keywordTrigger: keywordTrigger || "GLOBAL_FLOW",
           salesGroupJid: salesGroupJid || null 
         },
         create: { 
           tenantId, 
           openingMessage, 
-          closingMessage, 
           keywordTrigger: keywordTrigger || "GLOBAL_FLOW",
           salesGroupJid: salesGroupJid || null 
         }
@@ -48,9 +47,9 @@ async function saveChatbotConfig(tenantId, configData) {
         where: { configId: config.configId }
       });
 
-      // C. Masukkan secara masal data opsi subjek baru dari array dinamis UI React
+      // C. Masukkan secara masal data opsi subjek baru beserta orderIndex
       if (subjects && subjects.length > 0) {
-        const preparedSubjects = subjects.map((sub) => {
+        const preparedSubjects = subjects.map((sub, index) => {
           let finalSalesId = null;
 
           if (sub.routingType === 'DIRECT' && sub.targetSalesId) {
@@ -61,9 +60,11 @@ async function saveChatbotConfig(tenantId, configData) {
 
           return {
             configId: config.configId,
+            orderIndex: index, // <-- 1. Simpan urutan persis sesuai posisi di Web (#1 = 0, #2 = 1)
             name: sub.name || "Subjek Tanpa Nama",
             targetData: sub.targetData || "",
             toneStyle: sub.toneStyle || "Ramah",
+            closingMessage: sub.closingMessage || "",
             routingType: sub.routingType || 'ROUND_ROBIN',
             targetSalesId: finalSalesId,
             aiPrompt: sub.aiPrompt || ""
@@ -75,10 +76,14 @@ async function saveChatbotConfig(tenantId, configData) {
         });
       }
 
-      // Ambil kembali data utuh yang baru saja disimpan untuk dilempar balik ke controller
+      // 2. Kembalikan data dengan urutan orderIndex ascending
       return await tx.aiBotConfig.findUnique({
         where: { configId: config.configId },
-        include: { subjects: true }
+        include: {
+          subjects: {
+            orderBy: { orderIndex: 'asc' }
+          }
+        }
       });
     });
   } catch (error) {
@@ -86,69 +91,6 @@ async function saveChatbotConfig(tenantId, configData) {
     throw error;
   }
 }
-
-// async function saveChatbotConfig(tenantId, configData) {
-//   const { openingMessage, closingMessage, keywordTrigger, subjects } = configData;
-
-//   try {
-//     // Menjalankan $transaction agar aman dari risiko data korup (Rollback otomatis jika gagal)
-//     return await prisma.$transaction(async (tx) => {
-      
-//       // A. Upsert konfigurasi utama
-//       const config = await tx.aiBotConfig.upsert({
-//         where: { tenantId },
-//         update: { openingMessage, closingMessage, keywordTrigger: keywordTrigger || "GLOBAL_FLOW" },
-//         create: { tenantId, openingMessage, closingMessage, keywordTrigger: keywordTrigger || "GLOBAL_FLOW" }
-//       });
-
-//       // B. Hapus seluruh opsi subjek lama milik tenant ini
-//       await tx.aiBotSubject.deleteMany({
-//         where: { configId: config.configId }
-//       });
-
-//       // C. Masukkan secara masal data opsi subjek baru dari array dinamis UI React
-//             // C. Masukkan secara masal data opsi subjek baru dari array dinamis UI React
-//       if (subjects && subjects.length > 0) {
-        
-//         const preparedSubjects = subjects.map((sub) => {
-//           let finalSalesId = null;
-
-//           // 🌟 PENGAMAN UTAMA: Jika isi targetSalesId mengandung teks 'sales_', paksa jadi null 
-//           // agar database PostgreSQL/MySQL tidak crash akibat Foreign Key Constraint!
-//           if (sub.routingType === 'DIRECT' && sub.targetSalesId) {
-//             if (!sub.targetSalesId.startsWith('sales_')) {
-//               finalSalesId = sub.targetSalesId; // Gunakan ID asli jika nanti sudah dinamis dari DB
-//             }
-//           }
-
-//           return {
-//             configId: config.configId,
-//             name: sub.name || "Subjek Tanpa Nama",
-//             targetData: sub.targetData || "",
-//             toneStyle: sub.toneStyle || "Ramah",
-//             routingType: sub.routingType || 'ROUND_ROBIN',
-//             targetSalesId: finalSalesId, // Aman masuk database sebagai null untuk data dummy
-//             aiPrompt: sub.aiPrompt || ""
-//           };
-//         });
-
-//         await tx.aiBotSubject.createMany({
-//           data: preparedSubjects
-//         });
-//       }
-
-
-//       // Ambil kembali data utuh yang baru saja disimpan untuk dilempar balik ke controller
-//       return await tx.aiBotConfig.findUnique({
-//         where: { configId: config.configId },
-//         include: { subjects: true }
-//       });
-//     });
-//   } catch (error) {
-//     console.error('🚨 [Chatbot Service] Gagal memproses transaksi saveChatbotConfig:', error.message);
-//     throw error;
-//   }
-// }
 
 
 async function upsertChatbotNode(tenantId, data) {

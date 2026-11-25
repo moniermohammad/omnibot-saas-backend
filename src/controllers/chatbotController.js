@@ -28,7 +28,7 @@ const chatbotController = {
   },
 
   // 💾 2. POST: Simpan/Update Data Konfigurasi AI Global (Skema Overwrite Subjek Otomatis)
-  saveConfig: async (req, res) => {
+   saveConfig: async (req, res) => {
     try {
       const tenantId = req.user?.tenantId;
 
@@ -36,8 +36,18 @@ const chatbotController = {
         return res.status(400).json({ success: false, message: 'Tenant ID tidak sah dalam sesi.' });
       }
 
-      if (!req.body.openingMessage || !req.body.closingMessage) {
-        return res.status(400).json({ success: false, message: 'Data pesan pembuka dan penutup wajib diisi.' });
+      if (!req.body.openingMessage || !req.body.openingMessage.trim()) {
+        return res.status(400).json({ success: false, message: 'Data pesan pembuka wajib diisi.' });
+      }
+
+      const subjects = req.body.subjects;
+      if (!Array.isArray(subjects) || subjects.length === 0) {
+        return res.status(400).json({ success: false, message: 'Minimal harus ada 1 subjek layanan.' });
+      }
+
+      const hasEmptyClosing = subjects.some((sub) => !sub.closingMessage || !sub.closingMessage.trim());
+      if (hasEmptyClosing) {
+        return res.status(400).json({ success: false, message: 'Pesan penutup pada setiap subjek wajib diisi.' });
       }
 
       // 🌟 KUNCI UTAMA: Memanggil fungsi service murni database tanpa memikirkan req / res
@@ -53,6 +63,7 @@ const chatbotController = {
       return res.status(500).json({ success: false, message: 'Gagal menyimpan konfigurasi chatbot ke database.' });
     }
   },
+
 };
 
 module.exports = { chatbotController };

@@ -104,8 +104,8 @@ model AiBotConfig {
   configId       String         @id @default(uuid()) @map("config_id")
   tenantId       String         @unique @map("tenant_id")
   openingMessage String         @map("opening_message") @db.Text
-  closingMessage String         @map("closing_message") @db.Text
-  salesGroupJid  String?        @map("sales_group_jid") @db.VarChar(100) // <-- Tambahkan ini
+  // closingMessage dihapus dari sini
+  salesGroupJid  String?        @map("sales_group_jid") @db.VarChar(100)
   keywordTrigger String         @default("GLOBAL_FLOW") @map("keyword_trigger") @db.VarChar(50)
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
@@ -115,18 +115,18 @@ model AiBotConfig {
   @@map("ai_bot_configs")
 }
 
-
 model AiBotSubject {
-  subjectId     String       @id @default(uuid()) @map("subject_id")
-  configId      String       @map("config_id")
-  name          String       @db.VarChar(100) // Contoh: Layanan Pembelian Retail
-  targetData    String       @map("target_data") @db.Text // Contoh: Nama, Alamat, Ukuran Baju
-  toneStyle     String       @map("tone_style") @db.VarChar(150) // Contoh: Ramah, pakai emoji
-  routingType   String       @default("ROUND_ROBIN") @map("routing_type") @db.VarChar(30) // "ROUND_ROBIN" atau "DIRECT"
-  targetSalesId String?      @map("target_sales_id") // Menyimpan user_id dari model User jika tipe DIRECT
-  aiPrompt      String       @map("ai_prompt") @db.Text // Prompt otomatis hasil racikan background
-  
-  botConfig     AiBotConfig  @relation(fields: [configId], references: [configId], onDelete: Cascade)
+  subjectId      String      @id @default(uuid()) @map("subject_id")
+  configId       String      @map("config_id")
+  orderIndex     Int         @default(0) @map("order_index") // <-- Tambahkan ini
+  name           String      @db.VarChar(100)
+  targetData     String      @map("target_data") @db.Text
+  toneStyle      String      @map("tone_style") @db.VarChar(150)
+  closingMessage String      @map("closing_message") @db.Text
+  routingType    String      @default("ROUND_ROBIN") @map("routing_type") @db.VarChar(30)
+  targetSalesId  String?     @map("target_sales_id")
+  aiPrompt       String      @map("ai_prompt") @db.Text
+  botConfig      AiBotConfig @relation(fields: [configId], references: [configId], onDelete: Cascade)
 
   @@map("ai_bot_subjects")
 }

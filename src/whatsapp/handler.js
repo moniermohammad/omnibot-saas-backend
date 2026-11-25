@@ -5,6 +5,34 @@ const { GoogleGenAI } = require("@google/genai");
 const prisma = new PrismaClient();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// ✅ AI-04: Format Katalog Produk Lengkap sesuai schema Product (productName, costPrice, description, maxDiscount)
+function formatProductCatalog(products = []) {
+  if (!Array.isArray(products) || products.length === 0) return "";
+
+  const activeProducts = products.filter((p) => p.status !== "INACTIVE");
+  if (activeProducts.length === 0) return "";
+
+  return activeProducts
+    .map((p) => {
+      const numericPrice = Number(p.costPrice || 0);
+      const priceText =
+        numericPrice > 0
+          ? `Rp ${numericPrice.toLocaleString("id-ID")}`
+          : "Harga hubungi tim sales";
+
+      const descText = p.description ? ` | Info: ${p.description.trim()}` : "";
+
+      const numericMaxDisc = Number(p.maxDiscount || 0);
+      const discText =
+        numericMaxDisc > 0
+          ? ` | Batas Max Diskon AI: s/d ${numericMaxDisc}% (DILARANG menawarkan diskon melebihi ${numericMaxDisc}%; jika pelanggan minta diskon lebih besar, arahkan negosiasi ke tim sales)`
+          : " | Harga Net (Tidak ada diskon otomatis dari AI; jika pelanggan menawar, sampaikan akan dibantu negosiasi oleh tim sales)";
+
+      return `- ${p.productName}: ${priceText}${descText}${discText}`;
+    })
+    .join("\n");
+}
+
 function buildSystemPrompt(
   botConfig,
   subject,
@@ -15,11 +43,16 @@ function buildSystemPrompt(
   const companyName = botConfig.tenant?.businessName || "Perusahaan Kami";
   const companyProfile = sanitizeDbText(botConfig.openingMessage, companyName);
   const toneStyle = subject.toneStyle || "Ramah dan sopan";
+  const hasMultipleSubjects = (botConfig.subjects?.length || 0) > 1;
+  const productList = formatProductCatalog(botConfig.tenant?.products);
 
-  // Jika kamu punya data produk dari tabel Product, ikutkan sebagai referensi AI
-  const productList = (botConfig.tenant?.products || [])
-    .map((p) => `- ${p.name}${p.price ? ` (Rp${p.price})` : ""}`)
-    .join("\n");
+  const subjectClosingHint = sanitizeDbText(
+    subject.closingMessage,
+    "Terima kasih, data Anda sudah kami catat dan akan segera ditindaklanjuti oleh tim terkait.",
+  );
+
+  // Bersihkan tanda bintang (*) dari aiPrompt agar AI fokus pada nama field bersih
+  const cleanAiPrompt = (subject.aiPrompt || "").replace(/\*/g, "");
 
   const collectedEntries = Object.entries(savedData);
   const collectedSummary =
@@ -27,14 +60,20 @@ function buildSystemPrompt(
       ? collectedEntries.map(([k, v]) => `- ${k}: ${v}`).join("\n")
       : "Belum ada data terkumpul.";
 
-  return `
+  // ✅ ATURAN SALAM: Hanya menyapa jika subjek cuma 1 (karena belum ada menu sebelumnya)
+  const greetingRule =
+    isFirstTurn && !hasMultipleSubjects
+      ? "Sapa pelanggan dengan sopan sesuai profil perusahaan, lalu langsung tanyakan data pertama."
+      : "DILARANG mengucapkan salam pembuka ('Halo', 'Selamat datang', dll) dan DILARANG mengulang perkenalan profil/nama perusahaan lagi karena pelanggan sudah disapa sebelumnya. Langsung konfirmasi pilihan layanan secara singkat dan tanyakan data yang diminta.";
+
+      return `
       Kamu adalah Customer Service WhatsApp resmi untuk "${companyName}".
       PROFIL PERUSAHAAN: ${companyProfile}
       ${productList ? `DAFTAR PRODUK TERSEDIA:\n${productList}` : ""}
 
       LAYANAN YANG DIPILIH: "${subject.name}"
       GAYA BICARA: ${toneStyle}
-      ${subject.aiPrompt ? `INSTRUKSI KHUSUS LAYANAN: ${subject.aiPrompt}` : ""}
+      ${cleanAiPrompt ? `INSTRUKSI KHUSUS LAYANAN: ${cleanAiPrompt}` : ""}
 
       DATA PELANGGAN YANG SUDAH TERKUMPUL:
       ${collectedSummary}
@@ -43,15 +82,81 @@ function buildSystemPrompt(
       ${remainingFields.length > 0 ? remainingFields.join(", ") : "SEMUA DATA SUDAH LENGKAP"}
 
       ATURAN WAJIB BALASAN:
-      1. ${isFirstTurn ? "Sapa pelanggan dengan sopan sesuai profil perusahaan." : "DILARANG mengulang kata 'Halo', 'Selamat datang', atau menyebut nama pelanggan berulang kali."}
+      1. ${greetingRule}
       2. Tanyakan HANYA SATU data paling depan dari daftar yang tersisa. Jangan menggabungkan dua pertanyaan sekaligus.
       3. ATURAN CABANG: Jika data berikutnya bersifat bersyarat (misal mengandung kata "(Jika Perusahaan)") dan pelanggan sebelumnya menjawab "Pribadi", LEWATI pertanyaan itu dan langsung tanyakan data berikutnya.
       4. Jika pelanggan bertanya seputar perusahaan atau produk, jawab singkat terlebih dahulu, lalu lanjutkan menanyakan data yang belum lengkap.
       5. Jangan pernah menuliskan label struktur seperti "Salam Pembuka:" atau "Pesan Penutup:".
       6. Maksimal 2 kalimat pendek agar nyaman dibaca di WhatsApp.
-      ${remainingFields.length === 0 ? "7. Semua data sudah lengkap. Ucapkan terima kasih singkat bahwa data akan diteruskan ke tim terkait, lalu akhiri dengan tag [[DATA_COMPLETE]]." : ""}
+      7. ANTI-HALUSINASI: HANYA sebutkan fakta, harga, atau spesifikasi yang tertulis eksplisit pada "DATA PELANGGAN YANG SUDAH TERKUMPUL" dan "DAFTAR PRODUK TERSEDIA". DILARANG mengarang harga, promo, stok, atau berasumsi tentang kebutuhan yang tidak pernah diucapkan pelanggan.
+      ${remainingFields.length === 0 ? `8. Semua data sudah lengkap. Buat kalimat penutup yang natural, hangat, dan sesuai konteks percakapan dengan menyampaikan inti pesan ini: "${subjectClosingHint}". Akhiri balasan dengan tag [[DATA_COMPLETE]].` : ""}
       `.trim();
 }
+
+// function buildSystemPrompt(
+//   botConfig,
+//   subject,
+//   savedData,
+//   remainingFields,
+//   isFirstTurn = false,
+// ) {
+//   const companyName = botConfig.tenant?.businessName || "Perusahaan Kami";
+//   const companyProfile = sanitizeDbText(botConfig.openingMessage, companyName);
+//   const toneStyle = subject.toneStyle || "Ramah dan sopan";
+//   const hasMultipleSubjects = (botConfig.subjects?.length || 0) > 1;
+//   const productList = formatProductCatalog(botConfig.tenant?.products);
+
+//   const subjectClosingHint = sanitizeDbText(
+//     subject.closingMessage,
+//     "Terima kasih, data Anda sudah kami catat dan akan segera ditindaklanjuti oleh tim terkait."
+//   );
+
+//   // Bersihkan tanda bintang (*) dari aiPrompt agar AI fokus pada nama field bersih
+//   const cleanAiPrompt = (subject.aiPrompt || "").replace(/\*/g, "");
+
+//   const productList = (botConfig.tenant?.products || [])
+//     .map((p) => `- ${p.name}${p.price ? ` (Rp${p.price})` : ""}`)
+//     .join("\n");
+
+//   const collectedEntries = Object.entries(savedData);
+//   const collectedSummary =
+//     collectedEntries.length > 0
+//       ? collectedEntries.map(([k, v]) => `- ${k}: ${v}`).join("\n")
+//       : "Belum ada data terkumpul.";
+
+//   // ✅ ATURAN SALAM: Hanya menyapa jika subjek cuma 1 (karena belum ada menu sebelumnya)
+//   const greetingRule =
+//     isFirstTurn && !hasMultipleSubjects
+//       ? "Sapa pelanggan dengan sopan sesuai profil perusahaan, lalu langsung tanyakan data pertama."
+//       : "DILARANG mengucapkan salam pembuka ('Halo', 'Selamat datang', dll) dan DILARANG mengulang perkenalan profil/nama perusahaan lagi karena pelanggan sudah disapa sebelumnya. Langsung konfirmasi pilihan layanan secara singkat dan tanyakan data yang diminta.";
+
+//   return `
+//       Kamu adalah Customer Service WhatsApp resmi untuk "${companyName}".
+//       PROFIL PERUSAHAAN: ${companyProfile}
+//       ${productList ? `DAFTAR PRODUK TERSEDIA:\n${productList}` : ""}
+
+//       LAYANAN YANG DIPILIH: "${subject.name}"
+//       GAYA BICARA: ${toneStyle}
+//       ${cleanAiPrompt ? `INSTRUKSI KHUSUS LAYANAN: ${cleanAiPrompt}` : ""}
+
+//       DATA PELANGGAN YANG SUDAH TERKUMPUL:
+//       ${collectedSummary}
+
+//       DAFTAR DATA YANG MASIH HARUS DITANYAKAN (BERURUTAN):
+//       ${remainingFields.length > 0 ? remainingFields.join(", ") : "SEMUA DATA SUDAH LENGKAP"}
+
+//       ATURAN WAJIB BALASAN:
+//       1. ${greetingRule}
+//       2. Tanyakan HANYA SATU data paling depan dari daftar yang tersisa. Jangan menggabungkan dua pertanyaan sekaligus.
+//       3. ATURAN CABANG: Jika data berikutnya bersifat bersyarat (misal mengandung kata "(Jika Perusahaan)") dan pelanggan sebelumnya menjawab "Pribadi", LEWATI pertanyaan itu dan langsung tanyakan data berikutnya.
+//       4. Jika pelanggan bertanya seputar perusahaan atau produk, jawab singkat terlebih dahulu, lalu lanjutkan menanyakan data yang belum lengkap.
+//       5. Jangan pernah menuliskan label struktur seperti "Salam Pembuka:" atau "Pesan Penutup:".
+//       6. Maksimal 2 kalimat pendek agar nyaman dibaca di WhatsApp.
+//       7. ANTI-HALUSINASI: HANYA sebutkan fakta, harga, atau spesifikasi yang tertulis eksplisit pada "DATA PELANGGAN YANG SUDAH TERKUMPUL" dan "DAFTAR PRODUK TERSEDIA". DILARANG mengarang harga, promo, stok, atau berasumsi tentang kebutuhan yang tidak pernah diucapkan pelanggan.
+//       ${remainingFields.length === 0 ? `8. Semua data sudah lengkap. Buat kalimat penutup yang natural, hangat, dan sesuai konteks percakapan dengan menyampaikan inti pesan ini: "${subjectClosingHint}". Akhiri balasan dengan tag [[DATA_COMPLETE]].` : ""}
+//       `.trim();
+
+// }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -67,9 +172,10 @@ async function tryAskGemini(contents, systemInstruction) {
     "gemini-3.8-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    // "gemini-2.5-flash",
+    // "gemini-2.5-flash-lite",
   ];
+
 
   for (let i = 0; i < modelFallbackList.length; i++) {
     const currentModel = modelFallbackList[i];
@@ -197,13 +303,14 @@ async function handleIncomingMessage(sock, msg, tenantId) {
     );
 
     const botConfig = await prisma.aiBotConfig.findUnique({
-      where: { tenantId },
+    where: { tenantId },
       include: {
         tenant: { include: { products: true } },
-        subjects: { orderBy: { name: "asc" } },
+        subjects: { orderBy: { orderIndex: "asc" } }, // <-- Ubah dari name ke orderIndex
       },
     });
     if (!botConfig) return;
+
 
     // Cek masa aktif paket tenant
     if (
@@ -416,7 +523,6 @@ async function startSubjectInterview(
   return await sock.sendMessage(rawJid, { text: fallbackIntro });
 }
 
-// 3. SUB-PROSES B: Melanjutkan wawancara yang sedang berjalan
 async function processActiveInterview(
   sock,
   rawJid,
@@ -426,11 +532,16 @@ async function processActiveInterview(
   botConfig,
   activeSubject,
 ) {
-  const fields = (activeSubject.targetData || "")
+  const rawFields = (activeSubject.targetData || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 
+  const isMandatoryField = (field) => field.endsWith("*");
+  const cleanFieldName = (field) => field.replace(/\*+$/, "").trim();
+  const fields = rawFields.map(cleanFieldName);
+
+  // Ambil atau buat sesi lead aktif
   let currentLead = await prisma.lead.findFirst({
     where: { tenantId, phoneNumber: senderPhone, status: "BOT_PROCESS" },
     orderBy: { createdAt: "desc" },
@@ -452,6 +563,60 @@ async function processActiveInterview(
       ? { ...currentLead.formData }
       : {};
 
+  // Siapkan pesan penutup dari subjek aktif
+  const closingText = sanitizeDbText(
+    activeSubject.closingMessage,
+    "Terima kasih sudah menghubungi kami. Tim kami akan segera menindaklanjuti kebutuhan Anda.",
+  );
+
+  // 2. DETEKSI JIKA PELANGGAN MINTA LANGSUNG TERHUBUNG KE SALES / ADMIN (Tahan typo)
+  const isRequestingDirectSales =
+    /\b((boleh\s*)?(la[a-z]{2,7}\s*)?(ke\s*|sama\s*|dengan\s*)?(sales|sale|admin|cs|orang|manusia|marketing|agen|staff)\b|minta\s*(kontak|nomor|no|wa|tlp|telp|telepon|chat)\s*(sales|admin|cs|marketing|agen|orang)?|hubungkan\s*(ke\s*|dengan\s*)?(sales|admin|cs|marketing|orang)|bicara\s*(dengan\s*|sama\s*)?(sales|admin|cs|orang|manusia)|ngobrol\s*(dengan\s*|sama\s*)?(sales|admin|cs|orang)|ada\s*(sales|admin|cs|orangnya)\b|jangan\s*(pakai\s*)?(bot|ai|robot))/i.test(
+      incomingText,
+    );
+
+  if (isRequestingDirectSales) {
+    // Tandai semua field NON-PRIORITAS (tanpa *) sebagai dilewati
+    rawFields.forEach((rawField) => {
+      const key = cleanFieldName(rawField);
+      if (!isMandatoryField(rawField) && !savedData[key]) {
+        savedData[key] = "- (Minta langsung ke Sales)";
+      }
+    });
+
+    await prisma.lead.update({
+      where: { leadId: currentLead.leadId },
+      data: { formData: savedData },
+    });
+
+    // Cek apakah masih ada field PRIORITAS (*) yang belum terisi
+    const remainingMandatory = rawFields
+      .filter((f) => isMandatoryField(f))
+      .map((f) => cleanFieldName(f))
+      .filter((key) => !savedData[key]);
+
+    // Jika tidak ada field prioritas tersisa -> Langsung kirim 1 bubble penutup + info sales!
+    if (remainingMandatory.length === 0) {
+      await allocateLeadsToSales(
+        sock,
+        rawJid,
+        tenantId,
+        activeSubject,
+        senderPhone,
+        savedData,
+        closingText,
+      );
+      return await resetSessionToWelcome(tenantId, senderPhone);
+    }
+
+    // ✅ Perbaikan: Ambil 1 pertanyaan prioritas paling depan
+    const nextMandatory = remainingMandatory[0];
+    return await sock.sendMessage(rawJid, {
+      text: `Tentu, kami akan segera menghubungkan Anda dengan tim kami. Sebagai syarat pengalihan ke tim terkait, mohon informasikan *${nextMandatory}* Anda terlebih dahulu ya:`,
+    });
+  }
+
+  // 3. ALUR WAWANCARA NORMAL PER PERTANYAAN
   const currentField = fields.find((f) => !savedData[f]) || null;
 
   if (currentField) {
@@ -464,28 +629,29 @@ async function processActiveInterview(
     // Deteksi jika pelanggan bertanya balik (?) sebelum menjawab data
     const isCustomerAskingBack =
       incomingText.includes("?") ||
-      /\b(apa\s*aja|ada\s*apa|berapa|daftar|list|pilihan|tipe\s*apa|jenis\s*apa|info\s*harga)\b/i.test(
+      /\b(apa\s*aja|ada\s*apa|berapa|daftar|list|pilihan|tipe\s*apa|jenis\s*apa|info\s*harga|diskon|nego|potongan)\b/i.test(
         incomingText,
       );
 
     if (isCustomerAskingBack) {
       await sock.sendPresenceUpdate("composing", rawJid);
+
+      // ✅ Gunakan helper formatProductCatalog (productName, costPrice, description, maxDiscount)
+      const formattedCatalog = formatProductCatalog(botConfig.tenant?.products);
       const productList =
-        botConfig.tenant?.products?.length > 0
-          ? botConfig.tenant.products
-              .map(
-                (p) =>
-                  `- ${p.name} (Rp ${p.price?.toLocaleString("id-ID") || "-"})`,
-              )
-              .join("\n")
-          : "Belum ada daftar katalog spesifik di sistem (berikan penjelasan umum yang ramah sesuai profil perusahaan, lalu arahkan ke tim sales untuk brosur/detail lengkap).";
+        formattedCatalog ||
+        "Belum ada daftar katalog spesifik di sistem (berikan penjelasan umum yang ramah sesuai profil perusahaan, lalu arahkan ke tim sales untuk brosur/detail lengkap).";
 
       const askBackPrompt = `Kamu adalah CS AI dari ${botConfig.tenant?.businessName || "perusahaan kami"}.
       Profil Perusahaan: ${botConfig.openingMessage || "-"} 
       Katalog/Produk Tersedia:
       ${productList}
       Pelanggan sedang mengisi data "${currentField}", tetapi bertanya balik: "${incomingText}".
-      Jawab pertanyaannya secara ramah & jujur berdasarkan info di atas, lalu tanyakan kembali data "${currentField}". JANGAN tulis [[DATA_COMPLETE]].`;
+      ATURAN WAJIB:
+      1. DILARANG mengucapkan salam pembuka ("Halo", "Selamat datang", dll) dan DILARANG mengulang perkenalan nama perusahaan lagi karena percakapan sudah berjalan.
+      2. Jawab pertanyaannya secara ramah, singkat (maksimal 2 kalimat), dan jujur berdasarkan info katalog di atas. Patuhi batas max diskon masing-masing produk (jangan mengarang harga/diskon).
+      3. Setelah menjawab singkat, langsung tanyakan kembali data "${currentField}".
+      4. JANGAN tulis [[DATA_COMPLETE]].`;
 
       const answerReply = await tryAskGemini(
         [{ role: "user", parts: [{ text: incomingText }] }],
@@ -500,16 +666,34 @@ async function processActiveInterview(
       });
     }
 
-    // Simpan jawaban & jalankan percabangan kondisional "(Jika Perusahaan)"
-    savedData[currentField] = incomingText;
-    const categoryAnswer =
-      Object.entries(savedData).find(([key]) =>
-        /kategori|jenis pembeli|atas nama|keperluan/i.test(key),
-      )?.[1] || "";
 
-    if (
-      /\bpribadi\b|\bperorangan\b|\bindividu\b/i.test(String(categoryAnswer))
-    ) {
+    // ✅ Perbaikan AI-02: Normalkan jawaban mengelak (tanpa ditimpa ulang oleh incomingText)
+    const isWindowShopping =
+      !/nama/i.test(currentField) &&
+      /\b(lihat[\s-]*lihat|liat[\s-]*liat|tanya[\s-]*tanya|belum\s*(tahu|tau|pasti|menentukan)|masih\s*bingung|cek\s*harga\s*dulu)\b/i.test(
+        incomingText,
+      );
+
+    savedData[currentField] = isWindowShopping
+      ? "Belum menentukan (Masih melihat-lihat)"
+      : incomingText.trim();
+
+    // 4. PERCABANGAN KONDISIONAL "(Jika Perusahaan)"
+    const categoryEntry = Object.entries(savedData).find(([key]) =>
+      /kategori|jenis pembeli|atas nama|keperluan/i.test(key),
+    );
+    // ✅ Perbaikan: Ambil value jawaban dari pasangan [key, value]
+    const categoryAnswer = categoryEntry ? categoryEntry[1] : "";
+
+    const isPribadi =
+      /\b(pribadi|perorangan|individu|personal|sendiri|rumah\s*tangga)\b/i.test(
+        String(categoryAnswer),
+      ) &&
+      !/\b(perusahaan|pt|cv|kantor|instansi|korporasi|b2b)\b/i.test(
+        String(categoryAnswer),
+      );
+
+    if (isPribadi) {
       fields.forEach((f) => {
         if (/\(\s*jika\s+perusahaan\s*\)/i.test(f) && !savedData[f]) {
           savedData[f] = "- (Pribadi)";
@@ -523,12 +707,10 @@ async function processActiveInterview(
     });
   }
 
+  // 5. CEK SISA PERTANYAAN & PENUTUPAN
   const remainingFields = fields.filter((f) => !savedData[f]);
-  const nextField = remainingFields[0] || null;
-  const closingText = sanitizeDbText(
-    botConfig.closingMessage,
-    "Terima kasih sudah menghubungi kami. Tim kami akan segera menindaklanjuti kebutuhan Anda.",
-  );
+  // ✅ Perbaikan: Ambil 1 pertanyaan berikutnya paling depan
+  const nextField = remainingFields.length > 0 ? remainingFields[0] : null;
 
   await sock.sendPresenceUpdate("composing", rawJid);
   const userTurnContext = currentField
@@ -549,6 +731,7 @@ async function processActiveInterview(
       false,
     ),
   );
+
   await sock.sendPresenceUpdate("paused", rawJid);
 
   if (aiReply) {
@@ -556,10 +739,7 @@ async function processActiveInterview(
     const cleanAiReply = aiReply.replace("[[DATA_COMPLETE]]", "").trim();
 
     if (isComplete) {
-      const finalClosingMsg = cleanAiReply
-        ? `${cleanAiReply}\n\n${closingText}`
-        : closingText;
-      await sock.sendMessage(rawJid, { text: finalClosingMsg });
+      const finalClosingMsg = cleanAiReply || closingText;
       await allocateLeadsToSales(
         sock,
         rawJid,
@@ -567,6 +747,7 @@ async function processActiveInterview(
         activeSubject,
         senderPhone,
         savedData,
+        finalClosingMsg,
       );
       return await resetSessionToWelcome(tenantId, senderPhone);
     }
@@ -580,9 +761,6 @@ async function processActiveInterview(
     });
   }
 
-  await sock.sendMessage(rawJid, {
-    text: `Terima kasih atas informasinya.\n\n${closingText}`,
-  });
   await allocateLeadsToSales(
     sock,
     rawJid,
@@ -590,9 +768,11 @@ async function processActiveInterview(
     activeSubject,
     senderPhone,
     savedData,
+    closingText,
   );
   return await resetSessionToWelcome(tenantId, senderPhone);
 }
+
 
 async function allocateLeadsToSales(
   sock,
@@ -601,19 +781,49 @@ async function allocateLeadsToSales(
   sub,
   customerPhone,
   formData = {},
+  closingMessage = "",
 ) {
-  let selectedSales = null;
+  // ✅ 1. ATOMIC LOCK (B1-01): Cari & kunci sesi lead aktif secara atomik agar anti-duplikasi
+  const targetLead = await prisma.lead.findFirst({
+    where: { tenantId, phoneNumber: customerPhone, status: "BOT_PROCESS" },
+    orderBy: { createdAt: "desc" },
+  });
 
+  if (!targetLead) {
+    console.log(
+      `⏭️ [B1-01 Skip Duplikat] Lead aktif tidak ditemukan atau sudah diproses untuk [${customerPhone}].`,
+    );
+    return;
+  }
+
+  // Kunci langsung statusnya menjadi "ASSIGNING" agar request paralel lain tertolak
+  const lockResult = await prisma.lead.updateMany({
+    where: {
+      leadId: targetLead.leadId,
+      status: "BOT_PROCESS",
+    },
+    data: {
+      status: "ASSIGNING",
+    },
+  });
+
+  if (lockResult.count === 0) {
+    console.log(
+      `⏭️ [B1-01 Race Condition Blocked] Penugasan ganda dicegah untuk [${customerPhone}].`,
+    );
+    return;
+  }
+
+  // 2. Pilih Sales berdasarkan skema DIRECT atau ROUND_ROBIN
+  let selectedSales = null;
   if (sub.routingType === "DIRECT" && sub.targetSalesId) {
     const directSales = await prisma.user.findUnique({
       where: { userId: sub.targetSalesId },
     });
-    // Pastikan sales tujuan masih berstatus aktif
     if (directSales && directSales.isActive !== false) {
       selectedSales = directSales;
     }
   } else if (sub.routingType === "ROUND_ROBIN") {
-    // ✅ Hanya bagikan ke sales yang berstatus aktif (isActive: true)
     const team = await prisma.user.findMany({
       where: { tenantId, role: "SALES", isActive: true },
       orderBy: { createdAt: "asc" },
@@ -632,34 +842,53 @@ async function allocateLeadsToSales(
     }
   }
 
-  // Update status lead terbaru
-  const targetLead = await prisma.lead.findFirst({
-    where: { tenantId, phoneNumber: customerPhone, status: "BOT_PROCESS" },
-    orderBy: { createdAt: "desc" },
+  // 3. Finalisasi status lead menjadi ASSIGNED / UNASSIGNED
+  await prisma.lead.update({
+    where: { leadId: targetLead.leadId },
+    data: {
+      status: selectedSales ? "ASSIGNED" : "UNASSIGNED",
+      assignedToSalesId: selectedSales ? selectedSales.userId : null,
+      assignedSalesName: selectedSales ? selectedSales.name : null,
+    },
   });
 
-  if (targetLead) {
-    await prisma.lead.update({
-      where: { leadId: targetLead.leadId },
-      data: {
-        status: selectedSales ? "ASSIGNED" : "UNASSIGNED",
-        assignedToSalesId: selectedSales ? selectedSales.userId : null,
-        assignedSalesName: selectedSales ? selectedSales.name : null,
-      },
-    });
-  }
-
-  // ✅ Sembunyikan field kondisional yang bernilai "- (Pribadi)" agar pesan ke sales tetap bersih
   const summaryLines = Object.entries(formData)
-    .filter(([_, val]) => String(val || "").trim() !== "- (Pribadi)")
+    .filter(([_, val]) => {
+      const cleanVal = String(val || "").trim();
+      return (
+        cleanVal !== "" &&
+        cleanVal !== "- (Pribadi)" &&
+        cleanVal !== "- (Minta langsung ke Sales)"
+      );
+    })
     .map(([key, val]) => `• *${key}:* ${val}`)
     .join("\n");
 
+  // ✅ Siapkan nama pelanggan & link WhatsApp dengan sapaan otomatis (?text=)
+  const nameEntry = Object.entries(formData).find(
+    ([key, val]) =>
+      /nama/i.test(key) &&
+      !/perusahaan|pt|cv|instansi/i.test(key) &&
+      val &&
+      !String(val).startsWith("- ("),
+  );
+  const customerName = nameEntry
+    ? String(nameEntry[1]).trim().replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Kak";
+
+  const salesGreeting = encodeURIComponent(
+    `Halo Kak ${customerName}, perkenalkan saya ${selectedSales?.name || "Tim"} menindaklanjuti permintaan Anda terkait *${sub.name}*. Ada yang bisa kami bantu lebih lanjut?`,
+  );
+  const waCustomerLink = `https://wa.me{customerPhone}?text=${salesGreeting}`;
+
+  // 4. Gabungkan pesan penutup + info nama sales dalam 1 gelembung chat ke customer
   if (selectedSales) {
-    // Tampilkan HANYA nama sales ke customer
-    await sock.sendMessage(rawJid, {
-      text: `👤 *Tim Sales yang Menangani:* *${selectedSales.name}*\nPermintaan Anda telah diteruskan kepada *${selectedSales.name}* dan akan segera menghubungi Anda.`,
-    });
+    const salesInfoText = `👤 *Tim Sales yang Menangani:* *${selectedSales.name}*\nPermintaan Anda telah diteruskan kepada *${selectedSales.name}* dan akan segera menghubungi Anda.`;
+    const finalBubbleToCustomer = closingMessage
+      ? `${closingMessage}\n\n${salesInfoText}`
+      : salesInfoText;
+
+    await sock.sendMessage(rawJid, { text: finalBubbleToCustomer });
 
     // Kirim notifikasi japri ke WhatsApp Sales yang bersangkutan
     const cleanSalesPhone = selectedSales.phoneNumber.replace(/[^0-9]/g, "");
@@ -667,7 +896,7 @@ async function allocateLeadsToSales(
 
     await sock
       .sendMessage(salesJid, {
-        text: `👥 *[LEADS BARU - ${sub.name}]*\n\nHalo *${selectedSales.name}*, Anda mendapatkan prospek baru:\n${summaryLines || "• Tidak ada detail tambahan"}\n\nHubungi Customer: wa.me/${customerPhone}`,
+        text: `👥 *[LEADS BARU - ${sub.name}]*\n\nHalo *${selectedSales.name}*, Anda mendapatkan prospek baru:\n${summaryLines || "• Pelanggan meminta langsung terhubung ke tim sales"}\n\nHubungi Customer:\n${waCustomerLink}`,
       })
       .catch((err) => {
         console.error(
@@ -675,9 +904,11 @@ async function allocateLeadsToSales(
           err.message,
         );
       });
+  } else if (closingMessage) {
+    await sock.sendMessage(rawJid, { text: closingMessage });
   }
 
-  // Ambil salesGroupJid dari botConfig dan kirim ke Grup Sales (jika diatur)
+  // 5. Ambil salesGroupJid dari botConfig dan kirim ke Grup Sales (jika diatur)
   const config = await prisma.aiBotConfig.findUnique({
     where: { tenantId },
     select: { salesGroupJid: true },
@@ -693,8 +924,8 @@ async function allocateLeadsToSales(
         text:
           `📢 *[PROSPEK BARU - ${sub.name}]*\n\n` +
           `👤 *PIC Sales:* ${selectedSales ? selectedSales.name : "Belum ditentukan"}\n` +
-          `📱 *No. Customer:* wa.me/${customerPhone}\n\n` +
-          `*Detail Kebutuhan:*\n${summaryLines || "• Tidak ada detail tambahan"}\n\n` +
+          `📱 *Hubungi Customer:* ${waCustomerLink}\n\n` +
+          `*Detail Kebutuhan:*\n${summaryLines || "• Pelanggan meminta langsung terhubung ke tim sales"}\n\n` +
           `_Mohon segera ditindaklanjuti._`,
       })
       .catch((err) => {
