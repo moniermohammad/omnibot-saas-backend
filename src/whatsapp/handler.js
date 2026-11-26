@@ -267,6 +267,13 @@ async function resetSessionToWelcome(
 }
 
 // 4. PINTU MASUK UTAMA
+// Helper deteksi keinginan langsung terhubung ke sales/admin (tahan typo & kata sisipan)
+function checkDirectSalesIntent(text) {
+  return /\b((boleh|bisa|mau|ingin|minta|tolong|hubungkan|sambungkan|oper|lempar|alihkan|bicara|ngobrol|chat)\b.{0,25}\b(sales|sale|admin|cs|marketing|agen|operator|orang|manusia)|jangan\s*(pakai\s*)?(bot|ai|robot))/i.test(
+    text,
+  );
+}
+
 async function handleIncomingMessage(sock, msg, tenantId) {
   if (!msg || !msg.message || msg.key.fromMe) return;
   const rawJid = msg.key.remoteJid;
@@ -303,14 +310,13 @@ async function handleIncomingMessage(sock, msg, tenantId) {
     );
 
     const botConfig = await prisma.aiBotConfig.findUnique({
-    where: { tenantId },
+      where: { tenantId },
       include: {
         tenant: { include: { products: true } },
-        subjects: { orderBy: { orderIndex: "asc" } }, // <-- Ubah dari name ke orderIndex
+        subjects: { orderBy: { orderIndex: "asc" } },
       },
     });
     if (!botConfig) return;
-
 
     // Cek masa aktif paket tenant
     if (
@@ -335,6 +341,8 @@ async function handleIncomingMessage(sock, msg, tenantId) {
         },
       },
     });
+
+    const isFirstTimeSession = !session;
 
     if (!session) {
       session = await prisma.botSession.create({
@@ -384,6 +392,7 @@ async function handleIncomingMessage(sock, msg, tenantId) {
     const activeSubject = botConfig.subjects.find(
       (s) => s.subjectId === session.currentNodeId,
     );
+
     if (activeSubject) {
       return await processActiveInterview(
         sock,
@@ -413,7 +422,32 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       );
     }
 
-    // Jika subjek >= 2 -> cocokkan pilihan nomor/nama layanan, atau tampilkan daftar menu
+    // Jika pelanggan minta langsung ke sales/admin di menu awal -> langsung lempar ke processActiveInterview
+    const wantsDirectSales = checkDirectSalesIntent(incomingText);
+    if (wantsDirectSales && botConfig.subjects.length > 0) {
+      const defaultSubject = botConfig.subjects[0]; // Pilihan 1 (INFO PRODUK & HARGA)
+      await prisma.botSession.update({
+        where: {
+          tenantId_customerPhoneNumber: {
+            tenantId,
+            customerPhoneNumber: senderPhone,
+          },
+        },
+        data: { currentNodeId: defaultSubject.subjectId },
+      });
+
+      return await processActiveInterview(
+        sock,
+        rawJid,
+        tenantId,
+        senderPhone,
+        incomingText,
+        botConfig,
+        defaultSubject,
+      );
+    }
+
+    // Jika subjek >= 2 -> cocokkan pilihan nomor/nama layanan
     const numericChoice = parseInt(incomingText, 10);
     const matchedSubject =
       botConfig.subjects.find(
@@ -436,13 +470,211 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       );
     }
 
+    // Bedakan antara sapaan awal/sesi baru vs balasan yang belum sesuai pilihan menu
+    const isGreetingOnly =
+      /^((halo|hallo|hai|hi|hey|permisi|misi|p|ping|assalamu['\s]?alaikum)\s*)?(selamat\s*)?(pagi|siang|sore|malam|kak|min|admin|gan|bos|pak|bu)?[\s!?,.*]*$/i.test(
+        incomingText,
+      );
+
+    if (!isFirstTimeSession && !isGreetingOnly) {
+      const menuList = botConfig.subjects
+        .map((s, idx) => `${idx + 1}. *${s.name}*`)
+        .join("\n");
+
+      return await sock.sendMessage(rawJid, {
+        text:
+          `Mohon maaf Kak, agar kami dapat menghubungkan ke tim yang tepat, silakan balas dengan *angka* pilihan layanan berikut ya:\n\n` +
+          `${menuList}\n\n` +
+          `_Contoh: balas *1* atau *2*_`,
+      });
+    }
+
     return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
   } catch (error) {
     console.error("🚨 [Bot Handler Error]:", error);
   }
 }
 
+
+// async function handleIncomingMessage(sock, msg, tenantId) {
+//   if (!msg || !msg.message || msg.key.fromMe) return;
+//   const rawJid = msg.key.remoteJid;
+//   if (!rawJid || rawJid === "status@broadcast") return;
+
+//   const cleanJidForPhone =
+//     msg.key.remoteJidAlt || msg.key.participant || rawJid;
+//   const senderPhone = cleanJidForPhone
+//     .split("@")[0]
+//     .split(":")[0]
+//     .replace(/[^0-9]/g, "");
+
+//   const actualMessage = msg.message?.ephemeralMessage?.message || msg.message;
+//   const incomingText = (
+//     actualMessage?.conversation ||
+//     actualMessage?.extendedTextMessage?.text ||
+//     ""
+//   ).trim();
+
+//   if (!incomingText || !senderPhone) return;
+
+//   if (rawJid.endsWith("@g.us")) {
+//     if (incomingText.toLowerCase() === "!idgrup") {
+//       return await sock.sendMessage(rawJid, {
+//         text: `🆔 *ID Grup WhatsApp ini:*\n\`${rawJid}\`\n\nSalin ID di atas ke pengaturan Bot CRM Anda.`,
+//       });
+//     }
+//     return;
+//   }
+
+//   try {
+//     console.log(
+//       `📩 [SaaS WA] Chat Masuk [Tenant: ${tenantId}] dari [${senderPhone}]: "${incomingText}"`,
+//     );
+
+//     const botConfig = await prisma.aiBotConfig.findUnique({
+//     where: { tenantId },
+//       include: {
+//         tenant: { include: { products: true } },
+//         subjects: { orderBy: { orderIndex: "asc" } }, // <-- Ubah dari name ke orderIndex
+//       },
+//     });
+//     if (!botConfig) return;
+
+
+//     // Cek masa aktif paket tenant
+//     if (
+//       botConfig.tenant.status === "EXPIRED" ||
+//       (botConfig.tenant.subscriptionEnd &&
+//         new Date() > new Date(botConfig.tenant.subscriptionEnd))
+//     ) {
+//       if (botConfig.tenant.status !== "EXPIRED") {
+//         await prisma.tenant.update({
+//           where: { tenantId },
+//           data: { status: "EXPIRED" },
+//         });
+//       }
+//       return;
+//     }
+
+//     let session = await prisma.botSession.findUnique({
+//       where: {
+//         tenantId_customerPhoneNumber: {
+//           tenantId,
+//           customerPhoneNumber: senderPhone,
+//         },
+//       },
+//     });
+
+//     if (!session) {
+//       session = await prisma.botSession.create({
+//         data: {
+//           tenantId,
+//           customerPhoneNumber: senderPhone,
+//           currentNodeId: "WELCOME",
+//         },
+//       });
+//     }
+
+//     // Auto-reset sesi jika lebih dari 24 jam tidak ada balasan
+//     if (session.currentNodeId !== "WELCOME" && session.updatedAt) {
+//       const hoursInactive =
+//         (Date.now() - new Date(session.updatedAt).getTime()) / (1000 * 60 * 60);
+//       if (hoursInactive >= 24) {
+//         session = await resetSessionToWelcome(
+//           tenantId,
+//           senderPhone,
+//           "EXPIRED_SESSION",
+//         );
+//       }
+//     }
+
+//     // Perintah reset manual oleh pelanggan
+//     if (["menu", "reset", "batal"].includes(incomingText.toLowerCase())) {
+//       await resetSessionToWelcome(tenantId, senderPhone, "CANCELLED");
+//       if (botConfig.subjects.length === 1) {
+//         const companyIntro = sanitizeDbText(
+//           botConfig.openingMessage,
+//           `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+//         );
+//         return await startSubjectInterview(
+//           sock,
+//           rawJid,
+//           tenantId,
+//           senderPhone,
+//           botConfig,
+//           botConfig.subjects[0],
+//           companyIntro,
+//         );
+//       }
+//       return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+//     }
+
+//     // Jika sedang di dalam wawancara subjek aktif -> panggil processActiveInterview
+//     const activeSubject = botConfig.subjects.find(
+//       (s) => s.subjectId === session.currentNodeId,
+//     );
+
+//     if (activeSubject) {
+//       return await processActiveInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         incomingText,
+//         botConfig,
+//         activeSubject,
+//       );
+//     }
+
+//     // Jika subjek hanya ada 1 -> langsung sapa profil perusahaan & mulai pertanyaan pertama tanpa pilih angka 1
+//     if (botConfig.subjects.length === 1) {
+//       const companyIntro = sanitizeDbText(
+//         botConfig.openingMessage,
+//         `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+//       );
+//       return await startSubjectInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         botConfig,
+//         botConfig.subjects[0],
+//         companyIntro,
+//       );
+//     }
+
+//     // Jika subjek >= 2 -> cocokkan pilihan nomor/nama layanan, atau tampilkan daftar menu
+//     const numericChoice = parseInt(incomingText, 10);
+//     const matchedSubject =
+//       botConfig.subjects.find(
+//         (s) => s.name.toLowerCase() === incomingText.toLowerCase(),
+//       ) ||
+//       (!Number.isNaN(numericChoice) &&
+//       numericChoice > 0 &&
+//       numericChoice <= botConfig.subjects.length
+//         ? botConfig.subjects[numericChoice - 1]
+//         : null);
+
+//     if (matchedSubject) {
+//       return await startSubjectInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         botConfig,
+//         matchedSubject,
+//       );
+//     }
+
+//     return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+//   } catch (error) {
+//     console.error("🚨 [Bot Handler Error]:", error);
+//   }
+// }
+
+
 // 2. SUB-PROSES A: Memulai wawancara subjek (Bisa dipanggil langsung jika subjek cuma 1, atau setelah pilih menu)
+
 async function startSubjectInterview(
   sock,
   rawJid,
@@ -773,7 +1005,6 @@ async function processActiveInterview(
   return await resetSessionToWelcome(tenantId, senderPhone);
 }
 
-
 async function allocateLeadsToSales(
   sock,
   rawJid,
@@ -879,10 +1110,19 @@ async function allocateLeadsToSales(
   const salesGreeting = encodeURIComponent(
     `Halo Kak ${customerName}, perkenalkan saya ${selectedSales?.name || "Tim"} menindaklanjuti permintaan Anda terkait *${sub.name}*. Ada yang bisa kami bantu lebih lanjut?`,
   );
-  const waCustomerLink = `https://wa.me{customerPhone}?text=${salesGreeting}`;
+
+  const cleanPhone = String(customerPhone || "").replace(/[^0-9]/g, "").replace(/^0/, "62");
+  const waCustomerLink = ["https://wa.me", cleanPhone].join("/") + "?text=" + salesGreeting;
+  const waCustomerLinkGroup = ["wa.me", cleanPhone].join("/");
+
+  // ✅ Siapkan nomor & JID Sales sekali saja agar bisa dipakai untuk japri & mention grup
+  const cleanSalesPhone = selectedSales?.phoneNumber
+    ? String(selectedSales.phoneNumber).replace(/[^0-9]/g, "").replace(/^0/, "62")
+    : "";
+  const salesJid = cleanSalesPhone ? `${cleanSalesPhone}@s.whatsapp.net` : null;
 
   // 4. Gabungkan pesan penutup + info nama sales dalam 1 gelembung chat ke customer
-  if (selectedSales) {
+  if (selectedSales && salesJid) {
     const salesInfoText = `👤 *Tim Sales yang Menangani:* *${selectedSales.name}*\nPermintaan Anda telah diteruskan kepada *${selectedSales.name}* dan akan segera menghubungi Anda.`;
     const finalBubbleToCustomer = closingMessage
       ? `${closingMessage}\n\n${salesInfoText}`
@@ -891,9 +1131,6 @@ async function allocateLeadsToSales(
     await sock.sendMessage(rawJid, { text: finalBubbleToCustomer });
 
     // Kirim notifikasi japri ke WhatsApp Sales yang bersangkutan
-    const cleanSalesPhone = selectedSales.phoneNumber.replace(/[^0-9]/g, "");
-    const salesJid = `${cleanSalesPhone}@s.whatsapp.net`;
-
     await sock
       .sendMessage(salesJid, {
         text: `👥 *[LEADS BARU - ${sub.name}]*\n\nHalo *${selectedSales.name}*, Anda mendapatkan prospek baru:\n${summaryLines || "• Pelanggan meminta langsung terhubung ke tim sales"}\n\nHubungi Customer:\n${waCustomerLink}`,
@@ -915,18 +1152,25 @@ async function allocateLeadsToSales(
   });
 
   if (config?.salesGroupJid) {
+
     const groupJid = config.salesGroupJid.includes("@g.us")
       ? config.salesGroupJid.trim()
       : `${config.salesGroupJid.trim()}@g.us`;
+
+    const picSalesText =
+      selectedSales && cleanSalesPhone
+        ? `@${cleanSalesPhone}`
+        : "Belum ditentukan";
 
     await sock
       .sendMessage(groupJid, {
         text:
           `📢 *[PROSPEK BARU - ${sub.name}]*\n\n` +
-          `👤 *PIC Sales:* ${selectedSales ? selectedSales.name : "Belum ditentukan"}\n` +
-          `📱 *Hubungi Customer:* ${waCustomerLink}\n\n` +
+          `👤  *PIC Sales:* ${picSalesText}\n` +
+          `📱  *Nomor Customer:* ${waCustomerLinkGroup}\n\n` +
           `*Detail Kebutuhan:*\n${summaryLines || "• Pelanggan meminta langsung terhubung ke tim sales"}\n\n` +
           `_Mohon segera ditindaklanjuti._`,
+        mentions: salesJid ? [salesJid] : [],
       })
       .catch((err) => {
         console.error(
