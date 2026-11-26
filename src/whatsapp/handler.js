@@ -268,6 +268,7 @@ async function resetSessionToWelcome(
 
 // 4. PINTU MASUK UTAMA
 // Helper deteksi keinginan langsung terhubung ke sales/admin (tahan typo & kata sisipan)
+// Helper deteksi keinginan langsung terhubung ke sales/admin (tahan typo & kata sisipan)
 function checkDirectSalesIntent(text) {
   return /\b((boleh|bisa|mau|ingin|minta|tolong|hubungkan|sambungkan|oper|lempar|alihkan|bicara|ngobrol|chat)\b.{0,25}\b(sales|sale|admin|cs|marketing|agen|operator|orang|manusia)|jangan\s*(pakai\s*)?(bot|ai|robot))/i.test(
     text,
@@ -342,8 +343,6 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       },
     });
 
-    const isFirstTimeSession = !session;
-
     if (!session) {
       session = await prisma.botSession.create({
         data: {
@@ -367,7 +366,7 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       }
     }
 
-    // Perintah reset manual oleh pelanggan
+    // Perintah reset manual oleh pelanggan -> langsung tampilkan Foto 1
     if (["menu", "reset", "batal"].includes(incomingText.toLowerCase())) {
       await resetSessionToWelcome(tenantId, senderPhone, "CANCELLED");
       if (botConfig.subjects.length === 1) {
@@ -385,6 +384,15 @@ async function handleIncomingMessage(sock, msg, tenantId) {
           companyIntro,
         );
       }
+      await prisma.botSession.update({
+        where: {
+          tenantId_customerPhoneNumber: {
+            tenantId,
+            customerPhoneNumber: senderPhone,
+          },
+        },
+        data: { currentNodeId: "MENU_SENT" },
+      });
       return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
     }
 
@@ -422,10 +430,10 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       );
     }
 
-    // Jika pelanggan minta langsung ke sales/admin di menu awal -> langsung lempar ke processActiveInterview
+    // 1. Jika pelanggan minta langsung ke sales/admin -> langsung lempar ke percakapan (processActiveInterview)
     const wantsDirectSales = checkDirectSalesIntent(incomingText);
     if (wantsDirectSales && botConfig.subjects.length > 0) {
-      const defaultSubject = botConfig.subjects[0]; // Pilihan 1 (INFO PRODUK & HARGA)
+      const defaultSubject = botConfig.subjects[0];
       await prisma.botSession.update({
         where: {
           tenantId_customerPhoneNumber: {
@@ -447,7 +455,7 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       );
     }
 
-    // Jika subjek >= 2 -> cocokkan pilihan nomor/nama layanan
+    // 2. Cocokkan pilihan nomor (1, 2, dst.) atau nama layanan persis
     const numericChoice = parseInt(incomingText, 10);
     const matchedSubject =
       botConfig.subjects.find(
@@ -470,13 +478,8 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       );
     }
 
-    // Bedakan antara sapaan awal/sesi baru vs balasan yang belum sesuai pilihan menu
-    const isGreetingOnly =
-      /^((halo|hallo|hai|hi|hey|permisi|misi|p|ping|assalamu['\s]?alaikum)\s*)?(selamat\s*)?(pagi|siang|sore|malam|kak|min|admin|gan|bos|pak|bu)?[\s!?,.*]*$/i.test(
-        incomingText,
-      );
-
-    if (!isFirstTimeSession && !isGreetingOnly) {
+    // 3. Jika Foto 1 SUDAH dikirim sebelumnya (status "MENU_SENT") dan input tidak dikenal -> kirim Foto 2
+    if (session.currentNodeId === "MENU_SENT") {
       const menuList = botConfig.subjects
         .map((s, idx) => `${idx + 1}. *${s.name}*`)
         .join("\n");
@@ -489,11 +492,23 @@ async function handleIncomingMessage(sock, msg, tenantId) {
       });
     }
 
+    // 4. Pesan awal apapun (status masih "WELCOME") -> Tandai "MENU_SENT" dan kirim Foto 1
+    await prisma.botSession.update({
+      where: {
+        tenantId_customerPhoneNumber: {
+          tenantId,
+          customerPhoneNumber: senderPhone,
+        },
+      },
+      data: { currentNodeId: "MENU_SENT" },
+    });
+
     return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
   } catch (error) {
     console.error("🚨 [Bot Handler Error]:", error);
   }
 }
+
 
 
 // async function handleIncomingMessage(sock, msg, tenantId) {
