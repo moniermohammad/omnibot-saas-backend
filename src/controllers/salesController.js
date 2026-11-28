@@ -99,117 +99,124 @@ async function addSalesByOwner(req, res) {
     });
   }
 }
-
-// async function addSalesByOwner(req, res) {
-//   try {
-//     const { name, phoneNumber } = req.body;
-//     // 1. Ambil data identitas dari JWT Token (Dipasok oleh middleware auth Anda)
-//     const ownerTenantId = req.user?.tenantId;
-//     const ownerRole = req.user?.role?.toUpperCase();
-
-//     // 🔒 Proteksi Akses: Hanya OWNER atau ADMIN yang boleh mendaftarkan sales baru
-//     if (ownerRole !== "OWNER" && ownerRole !== "ADMIN") {
-//       return res.status(403).json({
-//         success: false,
-//         message: "⛔ Akses ditolak. Hanya Owner atau Admin yang dapat menambahkan sales baru."
-//       });
-//     }
-
-//     // 2. Validasi input dasar
-//     if (!name || !name.trim()) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "⚠️ Nama lengkap sales wajib diisi."
-//       });
-//     }
-
-//     if (!phoneNumber || !phoneNumber.trim()) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "⚠️ Nomor WhatsApp sales wajib diisi."
-//       });
-//     }
-
-//     // Bersihkan format nomor HP (menghilangkan spasi, strip, atau tanda +)
-//     const cleanPhoneNumber = phoneNumber.replace(/[^0-9]/g, '');
-
-//     // 3. Validasi Keunikan: Cek apakah nomor HP sudah terdaftar di sistem global
-//     const isPhoneTaken = await prisma.user.findUnique({
-//       where: { phoneNumber: cleanPhoneNumber }
-//     });
-
-//     if (isPhoneTaken) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "❌ Nomor WhatsApp ini sudah terdaftar pada akun lain di sistem."
-//       });
-//     }
-
-//     // 4. Simpan ke database PostgreSQL via Prisma
-//     const newSales = await prisma.user.create({
-//       data: {
-//         tenantId: ownerTenantId,     // Dikunci otomatis sesuai perusahaan Owner yang login
-//         name: name.trim(),
-//         phoneNumber: cleanPhoneNumber,
-//         role: "SALES"                // 🌟 Dikunci otomatis menjadi role SALES
-//       },
-//       select: {
-//         userId: true,
-//         tenantId: true,
-//         name: true,
-//         phoneNumber: true,
-//         role: true,
-//         createdAt: true
-//       }
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       message: `🎉 Sales "${newSales.name}" berhasil didaftarkan ke dalam tim Anda.`,
-//       data: newSales
-//     });
-
-//   } catch (error) {
-//     console.error("🚨 Gagal menyimpan sales baru pada database:", error);
-//     return res.status(500).json({
-//       success: false,
-//       message: "🚨 Terjadi gangguan internal pada server saat menyimpan data sales."
-//     });
-//   }
-// }
-
 /**
  * Controller untuk mengambil daftar nama sales khusus di tenant ini (Untuk Dropdown Frontend)
  */
 // src/controllers/salesController.js
 
+// async function getTenantSalesList(req, res) {
+//   try {
+//     // Pastikan req.user.tenantId di bawah ini berhasil diekstrak dari JWT Token terbaru Anda
+//     const currentTenantId = req.user?.tenantId; 
+
+//     const salesMembers = await prisma.user.findMany({
+//       where: {
+//         tenantId: currentTenantId,
+//         role: "SALES",
+//         isActive: true // 🌟 PASTIKAN HURUF KAPITAL SEMUA (S-A-L-E-S)
+//         // isActive
+//       },
+//       select: {
+//         userId: true,
+//         name: true,
+//         phoneNumber: true
+//       },
+//       orderBy: {
+//         name: 'asc'
+//       }
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       data: salesMembers
+//     });
+//   } catch (error) {
+//     console.error("Error fetching sales list:", error);
+//     return res.status(500).json({ success: false, message: "Gagal memuat daftar sales." });
+//   }
+// }
+
 async function getTenantSalesList(req, res) {
   try {
-    // Pastikan req.user.tenantId di bawah ini berhasil diekstrak dari JWT Token terbaru Anda
-    const currentTenantId = req.user?.tenantId; 
+    const { tenantId } = req.user;
+    const includeInactive = req.query.includeInactive === "true";
 
-    const salesMembers = await prisma.user.findMany({
-      where: {
-        tenantId: currentTenantId,
-        role: "SALES" // 🌟 PASTIKAN HURUF KAPITAL SEMUA (S-A-L-E-S)
-      },
-      select: {
-        userId: true,
-        name: true,
-        phoneNumber: true
-      },
-      orderBy: {
-        name: 'asc'
-      }
+    const [tenant, salesList] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { tenantId },
+        select: { maxSales: true },
+      }),
+      prisma.user.findMany({
+        where: {
+          tenantId,
+          role: "SALES",
+          ...(includeInactive ? {} : { isActive: true }),
+        },
+        select: {
+          userId: true,
+          name: true,
+          phoneNumber: true,
+          isActive: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      maxSales: tenant?.maxSales ?? 1,
+      data: salesList,
+    });
+  } catch (error) {
+    console.error("Gagal memuat daftar sales:", error);
+    return res.status(500).json({ success: false, message: "Gagal memuat daftar tim sales." });
+  }
+}
+
+async function toggleSalesStatus(req, res) {
+  try {
+    const { tenantId } = req.user;
+    const { userId } = req.params;
+
+    const [tenant, targetUser, activeCount] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { tenantId },
+        select: { maxSales: true },
+      }),
+      prisma.user.findFirst({
+        where: { userId, tenantId, role: "SALES" },
+      }),
+      prisma.user.count({
+        where: { tenantId, role: "SALES", isActive: true },
+      }),
+    ]);
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: "Agen sales tidak ditemukan." });
+    }
+
+    const nextStatus = !targetUser.isActive;
+    const maxSales = tenant?.maxSales ?? 1;
+
+    if (nextStatus && activeCount >= maxSales) {
+      return res.status(400).json({
+        success: false,
+        message: `Kuota paket Anda maksimal ${maxSales} Sales aktif. Nonaktifkan salah satu sales terlebih dahulu sebelum mengaktifkan ${targetUser.name}.`,
+      });
+    }
+
+    await prisma.user.update({
+      where: { userId },
+      data: { isActive: nextStatus },
     });
 
     return res.status(200).json({
       success: true,
-      data: salesMembers
+      message: `${targetUser.name} sekarang ${nextStatus ? "AKTIF" : "NONAKTIF"}.`,
     });
   } catch (error) {
-    console.error("Error fetching sales list:", error);
-    return res.status(500).json({ success: false, message: "Gagal memuat daftar sales." });
+    console.error("Gagal mengubah status sales:", error);
+    return res.status(500).json({ success: false, message: "Gagal mengubah status agen sales." });
   }
 }
 
@@ -266,5 +273,6 @@ async function deleteSales(req, res) {
 module.exports = { 
   addSalesByOwner, 
   getTenantSalesList,
-  deleteSales // 🌟 Daftarkan fungsi baru di sini
+  deleteSales, // 🌟 Daftarkan fungsi baru di sini
+  toggleSalesStatus
 };

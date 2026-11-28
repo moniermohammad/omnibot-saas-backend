@@ -212,9 +212,53 @@ async function getBotQrCode(req, res) {
   try {
     const tenantData = await prisma.tenant.findUnique({
       where: { tenantId: tenantId },
-      select: { businessName: true },
+      select: {
+        businessName: true,
+        status: true,
+        subscriptionEnd: true,
+      },
     });
-    const namaBisnis = tenantData?.businessName || "Bisnis Anda";
+
+    if (!tenantData) {
+      return res.status(404).json({
+        success: false,
+        message: "⚠️ Data bisnis tidak ditemukan.",
+      });
+    }
+
+    const namaBisnis = tenantData.businessName || "Bisnis Anda";
+
+    // ✅ VALIDASI DI SISI SERVER: Cek apakah tanggal sekarang melewati subscriptionEnd
+    const isExpired =
+      tenantData.subscriptionEnd &&
+      new Date() > new Date(tenantData.subscriptionEnd);
+
+    if (isExpired) {
+      if (tenantData.status !== "EXPIRED") {
+        await prisma.tenant
+          .update({
+            where: { tenantId },
+            data: { status: "EXPIRED" },
+          })
+          .catch(() => {});
+      }
+
+      const endDateFormatted = new Date(
+        tenantData.subscriptionEnd
+      ).toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+
+      return res.status(403).json({
+        success: false,
+        status: "EXPIRED",
+        tenantId: tenantId,
+        tenantName: namaBisnis,
+        message: `⏳ Masa aktif paket [${namaBisnis}] telah berakhir pada ${endDateFormatted}. Silakan lakukan perpanjangan paket untuk menautkan WhatsApp.`,
+      });
+    }
 
     // 🌟 PERBAIKAN 3: Gunakan tenantId (bukan targetTenantId)
     const socket = getSocketByTenant(tenantId);
@@ -238,7 +282,10 @@ async function getBotQrCode(req, res) {
     }
 
     // 4. AMBIL STRING QR DARI CACHE GLOBAL MEMORY
-    const currentRawQr = global.lastTenantQr && global.lastTenantQr[tenantId] ? global.lastTenantQr[tenantId] : null;
+    const currentRawQr =
+      global.lastTenantQr && global.lastTenantQr[tenantId]
+        ? global.lastTenantQr[tenantId]
+        : null;
 
     // 5. KONDISI C: Jika mesin sudah jalan tapi string QR belum keluar
     if (!currentRawQr) {
@@ -273,6 +320,81 @@ async function getBotQrCode(req, res) {
     });
   }
 }
+
+// async function getBotQrCode(req, res) {
+//   const { tenantId } = req.user;
+
+//   if (!tenantId) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "⚠️ Identifikasi Tenant ID tidak ditemukan di dalam token JWT.",
+//     });
+//   }
+
+//   try {
+//     const tenantData = await prisma.tenant.findUnique({
+//       where: { tenantId: tenantId },
+//       select: { businessName: true },
+//     });
+//     const namaBisnis = tenantData?.businessName || "Bisnis Anda";
+
+//     // 🌟 PERBAIKAN 3: Gunakan tenantId (bukan targetTenantId)
+//     const socket = getSocketByTenant(tenantId);
+
+//     // 2. KONDISI A: Jika bot terdeteksi ONLINE di RAM & sudah terverifikasi login oleh WhatsApp
+//     if (socket && socket.user?.id) {
+//       return res.status(200).json({
+//         success: true,
+//         status: "ONLINE",
+//         tenantId: tenantId,
+//         tenantName: namaBisnis,
+//         message: `Bot WhatsApp untuk [${namaBisnis}] sudah dalam keadaan aktif terhubung.`,
+//       });
+//     }
+
+//     // 3. KONDISI B: Jika belum ada socket berjalan, bangunkan mesin Baileys di background
+//     if (!socket) {
+//       console.log(`ℹ️ [REST API] Membangunkan mesin Baileys berbasis Database untuk Tenant Baru: [${namaBisnis}]`);
+//       connectToWhatsApp(tenantId);
+//       await new Promise((resolve) => setTimeout(resolve, 3500));
+//     }
+
+//     // 4. AMBIL STRING QR DARI CACHE GLOBAL MEMORY
+//     const currentRawQr = global.lastTenantQr && global.lastTenantQr[tenantId] ? global.lastTenantQr[tenantId] : null;
+
+//     // 5. KONDISI C: Jika mesin sudah jalan tapi string QR belum keluar
+//     if (!currentRawQr) {
+//       return res.status(200).json({
+//         success: true,
+//         status: "OFFLINE_INITIALIZING",
+//         tenantId: tenantId,
+//         tenantName: namaBisnis,
+//         message: "Mesin bot telah menyala. QR Code sedang dipersiapkan oleh server WhatsApp. Silakan hit kembali dalam 3 detik.",
+//       });
+//     }
+
+//     // 6. KONDISI D: QR CODE SUKSES DITEMUKAN (60 DETIK)
+//     const durationSeconds = 60;
+//     const expiredAt = Date.now() + durationSeconds * 1000;
+
+//     return res.status(200).json({
+//       success: true,
+//       status: "QR_READY",
+//       tenantId: tenantId,
+//       tenantName: namaBisnis,
+//       qrCodeString: currentRawQr,
+//       validDurationSeconds: durationSeconds,
+//       expiredAt: expiredAt,
+//       message: `Silakan pindai QR Code untuk [${namaBisnis}]. QR ini akan kedaluwarsa dalam 60 detik.`,
+//     });
+//   } catch (error) {
+//     console.error("🚨 Gagal mengambil data QR Code via REST API:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "🚨 Terjadi gangguan internal pada server saat memuat QR Code bot.",
+//     });
+//   }
+// }
 
 
 async function getBotConfiguration(req, res) {

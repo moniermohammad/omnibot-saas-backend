@@ -6,6 +6,9 @@ const {
   approveTransaction,
   getAllTransactions,
   rejectTransaction,
+  getTenantWaMonitor,    // <-- Tambahkan ini
+  forceReconnectTenant,  // <-- Tambahkan ini
+  suspendTenant
 } = require("../controllers/billingController");
 
 const {
@@ -35,6 +38,11 @@ router.post("/checkout", createCheckoutTransaction);
 router.get("/transactions", verifySuperAdmin, getAllTransactions);
 router.post("/approve/:orderId", verifySuperAdmin, approveTransaction);
 router.post("/reject/:orderId", verifySuperAdmin, rejectTransaction);
+// Rute Monitor Tenant & Koneksi WA (T2-13)
+router.get("/tenants-monitor", verifySuperAdmin, getTenantWaMonitor);
+router.post("/tenants/:tenantId/reconnect", verifySuperAdmin, forceReconnectTenant);
+router.post("/tenants/:tenantId/suspend", verifySuperAdmin, suspendTenant);
+
 
 // Pasang middleware otorisasi Superadmin yang sama dengan endpoint billing Anda
 router.get("/master-bot/qr", verifySuperAdmin, getMasterBotQrCode);

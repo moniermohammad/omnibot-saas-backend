@@ -238,7 +238,6 @@ model BillingSetting {
   @@map("billing_settings")
 }
 
-
 model PaymentTransaction {
   transactionId String    @id @default(uuid()) @map("transaction_id")
   orderId       String    @unique @map("order_id") @db.VarChar(100) // Contoh: "INV-20261121-XXXX"
@@ -257,9 +256,6 @@ model PaymentTransaction {
   @@index([tenantId])
   @@map("payment_transactions")
 }
-
-
-
 
 model Quotation {
   quotationId String          @id @default(uuid()) @map("quotation_id")

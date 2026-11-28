@@ -85,10 +85,8 @@ app.get("/", (req, res) => {
 // 🌟 JALANKAN SERVER: Menggunakan server.listen (Hanya 1 kali)
 server.listen(PORT, async () => {
   console.log(`🚀 Server Express & WebSocket aktif melayani API di http://localhost:${PORT}`);
-  
   // 1. Jalankan Master Bot (OTP & Notifikasi SaaS)
   await connectToWhatsApp("MASTER_SYSTEM");
-  
   // 2. Pulihkan otomatis seluruh sesi WhatsApp Tenant aktif tanpa perlu buka web
   await restoreAllTenantSessions();
 });
