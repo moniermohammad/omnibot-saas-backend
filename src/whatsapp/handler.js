@@ -93,70 +93,6 @@ function buildSystemPrompt(
       `.trim();
 }
 
-// function buildSystemPrompt(
-//   botConfig,
-//   subject,
-//   savedData,
-//   remainingFields,
-//   isFirstTurn = false,
-// ) {
-//   const companyName = botConfig.tenant?.businessName || "Perusahaan Kami";
-//   const companyProfile = sanitizeDbText(botConfig.openingMessage, companyName);
-//   const toneStyle = subject.toneStyle || "Ramah dan sopan";
-//   const hasMultipleSubjects = (botConfig.subjects?.length || 0) > 1;
-//   const productList = formatProductCatalog(botConfig.tenant?.products);
-
-//   const subjectClosingHint = sanitizeDbText(
-//     subject.closingMessage,
-//     "Terima kasih, data Anda sudah kami catat dan akan segera ditindaklanjuti oleh tim terkait."
-//   );
-
-//   // Bersihkan tanda bintang (*) dari aiPrompt agar AI fokus pada nama field bersih
-//   const cleanAiPrompt = (subject.aiPrompt || "").replace(/\*/g, "");
-
-//   const productList = (botConfig.tenant?.products || [])
-//     .map((p) => `- ${p.name}${p.price ? ` (Rp${p.price})` : ""}`)
-//     .join("\n");
-
-//   const collectedEntries = Object.entries(savedData);
-//   const collectedSummary =
-//     collectedEntries.length > 0
-//       ? collectedEntries.map(([k, v]) => `- ${k}: ${v}`).join("\n")
-//       : "Belum ada data terkumpul.";
-
-//   // ✅ ATURAN SALAM: Hanya menyapa jika subjek cuma 1 (karena belum ada menu sebelumnya)
-//   const greetingRule =
-//     isFirstTurn && !hasMultipleSubjects
-//       ? "Sapa pelanggan dengan sopan sesuai profil perusahaan, lalu langsung tanyakan data pertama."
-//       : "DILARANG mengucapkan salam pembuka ('Halo', 'Selamat datang', dll) dan DILARANG mengulang perkenalan profil/nama perusahaan lagi karena pelanggan sudah disapa sebelumnya. Langsung konfirmasi pilihan layanan secara singkat dan tanyakan data yang diminta.";
-
-//   return `
-//       Kamu adalah Customer Service WhatsApp resmi untuk "${companyName}".
-//       PROFIL PERUSAHAAN: ${companyProfile}
-//       ${productList ? `DAFTAR PRODUK TERSEDIA:\n${productList}` : ""}
-
-//       LAYANAN YANG DIPILIH: "${subject.name}"
-//       GAYA BICARA: ${toneStyle}
-//       ${cleanAiPrompt ? `INSTRUKSI KHUSUS LAYANAN: ${cleanAiPrompt}` : ""}
-
-//       DATA PELANGGAN YANG SUDAH TERKUMPUL:
-//       ${collectedSummary}
-
-//       DAFTAR DATA YANG MASIH HARUS DITANYAKAN (BERURUTAN):
-//       ${remainingFields.length > 0 ? remainingFields.join(", ") : "SEMUA DATA SUDAH LENGKAP"}
-
-//       ATURAN WAJIB BALASAN:
-//       1. ${greetingRule}
-//       2. Tanyakan HANYA SATU data paling depan dari daftar yang tersisa. Jangan menggabungkan dua pertanyaan sekaligus.
-//       3. ATURAN CABANG: Jika data berikutnya bersifat bersyarat (misal mengandung kata "(Jika Perusahaan)") dan pelanggan sebelumnya menjawab "Pribadi", LEWATI pertanyaan itu dan langsung tanyakan data berikutnya.
-//       4. Jika pelanggan bertanya seputar perusahaan atau produk, jawab singkat terlebih dahulu, lalu lanjutkan menanyakan data yang belum lengkap.
-//       5. Jangan pernah menuliskan label struktur seperti "Salam Pembuka:" atau "Pesan Penutup:".
-//       6. Maksimal 2 kalimat pendek agar nyaman dibaca di WhatsApp.
-//       7. ANTI-HALUSINASI: HANYA sebutkan fakta, harga, atau spesifikasi yang tertulis eksplisit pada "DATA PELANGGAN YANG SUDAH TERKUMPUL" dan "DAFTAR PRODUK TERSEDIA". DILARANG mengarang harga, promo, stok, atau berasumsi tentang kebutuhan yang tidak pernah diucapkan pelanggan.
-//       ${remainingFields.length === 0 ? `8. Semua data sudah lengkap. Buat kalimat penutup yang natural, hangat, dan sesuai konteks percakapan dengan menyampaikan inti pesan ini: "${subjectClosingHint}". Akhiri balasan dengan tag [[DATA_COMPLETE]].` : ""}
-//       `.trim();
-
-// }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -275,239 +211,239 @@ function checkDirectSalesIntent(text) {
   );
 }
 
-async function handleIncomingMessage(sock, msg, tenantId) {
-  if (!msg || !msg.message || msg.key.fromMe) return;
-  const rawJid = msg.key.remoteJid;
-  if (!rawJid || rawJid === "status@broadcast") return;
+// async function handleIncomingMessage(sock, msg, tenantId) {
+//   if (!msg || !msg.message || msg.key.fromMe) return;
+//   const rawJid = msg.key.remoteJid;
+//   if (!rawJid || rawJid === "status@broadcast") return;
 
-  const cleanJidForPhone =
-    msg.key.remoteJidAlt || msg.key.participant || rawJid;
-  const senderPhone = cleanJidForPhone
-    .split("@")[0]
-    .split(":")[0]
-    .replace(/[^0-9]/g, "");
+//   const cleanJidForPhone =
+//     msg.key.remoteJidAlt || msg.key.participant || rawJid;
+//   const senderPhone = cleanJidForPhone
+//     .split("@")[0]
+//     .split(":")[0]
+//     .replace(/[^0-9]/g, "");
 
-  const actualMessage = msg.message?.ephemeralMessage?.message || msg.message;
-  const incomingText = (
-    actualMessage?.conversation ||
-    actualMessage?.extendedTextMessage?.text ||
-    ""
-  ).trim();
+//   const actualMessage = msg.message?.ephemeralMessage?.message || msg.message;
+//   const incomingText = (
+//     actualMessage?.conversation ||
+//     actualMessage?.extendedTextMessage?.text ||
+//     ""
+//   ).trim();
 
-  if (!incomingText || !senderPhone) return;
+//   if (!incomingText || !senderPhone) return;
 
-  if (rawJid.endsWith("@g.us")) {
-    if (incomingText.toLowerCase() === "!idgrup") {
-      return await sock.sendMessage(rawJid, {
-        text: `🆔 *ID Grup WhatsApp ini:*\n\`${rawJid}\`\n\nSalin ID di atas ke pengaturan Bot CRM Anda.`,
-      });
-    }
-    return;
-  }
+//   if (rawJid.endsWith("@g.us")) {
+//     if (incomingText.toLowerCase() === "!idgrup") {
+//       return await sock.sendMessage(rawJid, {
+//         text: `🆔 *ID Grup WhatsApp ini:*\n\`${rawJid}\`\n\nSalin ID di atas ke pengaturan Bot CRM Anda.`,
+//       });
+//     }
+//     return;
+//   }
 
-  try {
-    console.log(
-      `📩 [SaaS WA] Chat Masuk [Tenant: ${tenantId}] dari [${senderPhone}]: "${incomingText}"`,
-    );
+//   try {
+//     console.log(
+//       `📩 [SaaS WA] Chat Masuk [Tenant: ${tenantId}] dari [${senderPhone}]: "${incomingText}"`,
+//     );
 
-    const botConfig = await prisma.aiBotConfig.findUnique({
-      where: { tenantId },
-      include: {
-        tenant: { include: { products: true } },
-        subjects: { orderBy: { orderIndex: "asc" } },
-      },
-    });
-    if (!botConfig) return;
+//     const botConfig = await prisma.aiBotConfig.findUnique({
+//       where: { tenantId },
+//       include: {
+//         tenant: { include: { products: true } },
+//         subjects: { orderBy: { orderIndex: "asc" } },
+//       },
+//     });
+//     if (!botConfig) return;
 
-    // Cek masa aktif paket tenant
-    if (
-      botConfig.tenant.status === "EXPIRED" ||
-      (botConfig.tenant.subscriptionEnd &&
-        new Date() > new Date(botConfig.tenant.subscriptionEnd))
-    ) {
-      if (botConfig.tenant.status !== "EXPIRED") {
-        await prisma.tenant.update({
-          where: { tenantId },
-          data: { status: "EXPIRED" },
-        });
-      }
-      return;
-    }
+//     // Cek masa aktif paket tenant
+//     if (
+//       botConfig.tenant.status === "EXPIRED" ||
+//       (botConfig.tenant.subscriptionEnd &&
+//         new Date() > new Date(botConfig.tenant.subscriptionEnd))
+//     ) {
+//       if (botConfig.tenant.status !== "EXPIRED") {
+//         await prisma.tenant.update({
+//           where: { tenantId },
+//           data: { status: "EXPIRED" },
+//         });
+//       }
+//       return;
+//     }
 
-    let session = await prisma.botSession.findUnique({
-      where: {
-        tenantId_customerPhoneNumber: {
-          tenantId,
-          customerPhoneNumber: senderPhone,
-        },
-      },
-    });
+//     let session = await prisma.botSession.findUnique({
+//       where: {
+//         tenantId_customerPhoneNumber: {
+//           tenantId,
+//           customerPhoneNumber: senderPhone,
+//         },
+//       },
+//     });
 
-    if (!session) {
-      session = await prisma.botSession.create({
-        data: {
-          tenantId,
-          customerPhoneNumber: senderPhone,
-          currentNodeId: "WELCOME",
-        },
-      });
-    }
+//     if (!session) {
+//       session = await prisma.botSession.create({
+//         data: {
+//           tenantId,
+//           customerPhoneNumber: senderPhone,
+//           currentNodeId: "WELCOME",
+//         },
+//       });
+//     }
 
-    // Auto-reset sesi jika lebih dari 24 jam tidak ada balasan
-    if (session.currentNodeId !== "WELCOME" && session.updatedAt) {
-      const hoursInactive =
-        (Date.now() - new Date(session.updatedAt).getTime()) / (1000 * 60 * 60);
-      if (hoursInactive >= 24) {
-        session = await resetSessionToWelcome(
-          tenantId,
-          senderPhone,
-          "EXPIRED_SESSION",
-        );
-      }
-    }
+//     // Auto-reset sesi jika lebih dari 24 jam tidak ada balasan
+//     if (session.currentNodeId !== "WELCOME" && session.updatedAt) {
+//       const hoursInactive =
+//         (Date.now() - new Date(session.updatedAt).getTime()) / (1000 * 60 * 60);
+//       if (hoursInactive >= 24) {
+//         session = await resetSessionToWelcome(
+//           tenantId,
+//           senderPhone,
+//           "EXPIRED_SESSION",
+//         );
+//       }
+//     }
 
-    // Perintah reset manual oleh pelanggan -> langsung tampilkan Foto 1
-    if (["menu", "reset", "batal"].includes(incomingText.toLowerCase())) {
-      await resetSessionToWelcome(tenantId, senderPhone, "CANCELLED");
-      if (botConfig.subjects.length === 1) {
-        const companyIntro = sanitizeDbText(
-          botConfig.openingMessage,
-          `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
-        );
-        return await startSubjectInterview(
-          sock,
-          rawJid,
-          tenantId,
-          senderPhone,
-          botConfig,
-          botConfig.subjects[0],
-          companyIntro,
-        );
-      }
-      await prisma.botSession.update({
-        where: {
-          tenantId_customerPhoneNumber: {
-            tenantId,
-            customerPhoneNumber: senderPhone,
-          },
-        },
-        data: { currentNodeId: "MENU_SENT" },
-      });
-      return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
-    }
+//     // Perintah reset manual oleh pelanggan -> langsung tampilkan Foto 1
+//     if (["menu", "reset", "batal"].includes(incomingText.toLowerCase())) {
+//       await resetSessionToWelcome(tenantId, senderPhone, "CANCELLED");
+//       if (botConfig.subjects.length === 1) {
+//         const companyIntro = sanitizeDbText(
+//           botConfig.openingMessage,
+//           `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+//         );
+//         return await startSubjectInterview(
+//           sock,
+//           rawJid,
+//           tenantId,
+//           senderPhone,
+//           botConfig,
+//           botConfig.subjects[0],
+//           companyIntro,
+//         );
+//       }
+//       await prisma.botSession.update({
+//         where: {
+//           tenantId_customerPhoneNumber: {
+//             tenantId,
+//             customerPhoneNumber: senderPhone,
+//           },
+//         },
+//         data: { currentNodeId: "MENU_SENT" },
+//       });
+//       return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+//     }
 
-    // Jika sedang di dalam wawancara subjek aktif -> panggil processActiveInterview
-    const activeSubject = botConfig.subjects.find(
-      (s) => s.subjectId === session.currentNodeId,
-    );
+//     // Jika sedang di dalam wawancara subjek aktif -> panggil processActiveInterview
+//     const activeSubject = botConfig.subjects.find(
+//       (s) => s.subjectId === session.currentNodeId,
+//     );
 
-    if (activeSubject) {
-      return await processActiveInterview(
-        sock,
-        rawJid,
-        tenantId,
-        senderPhone,
-        incomingText,
-        botConfig,
-        activeSubject,
-      );
-    }
+//     if (activeSubject) {
+//       return await processActiveInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         incomingText,
+//         botConfig,
+//         activeSubject,
+//       );
+//     }
 
-    // Jika subjek hanya ada 1 -> langsung sapa profil perusahaan & mulai pertanyaan pertama tanpa pilih angka 1
-    if (botConfig.subjects.length === 1) {
-      const companyIntro = sanitizeDbText(
-        botConfig.openingMessage,
-        `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
-      );
-      return await startSubjectInterview(
-        sock,
-        rawJid,
-        tenantId,
-        senderPhone,
-        botConfig,
-        botConfig.subjects[0],
-        companyIntro,
-      );
-    }
+//     // Jika subjek hanya ada 1 -> langsung sapa profil perusahaan & mulai pertanyaan pertama tanpa pilih angka 1
+//     if (botConfig.subjects.length === 1) {
+//       const companyIntro = sanitizeDbText(
+//         botConfig.openingMessage,
+//         `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+//       );
+//       return await startSubjectInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         botConfig,
+//         botConfig.subjects[0],
+//         companyIntro,
+//       );
+//     }
 
-    // 1. Jika pelanggan minta langsung ke sales/admin -> langsung lempar ke percakapan (processActiveInterview)
-    const wantsDirectSales = checkDirectSalesIntent(incomingText);
-    if (wantsDirectSales && botConfig.subjects.length > 0) {
-      const defaultSubject = botConfig.subjects[0];
-      await prisma.botSession.update({
-        where: {
-          tenantId_customerPhoneNumber: {
-            tenantId,
-            customerPhoneNumber: senderPhone,
-          },
-        },
-        data: { currentNodeId: defaultSubject.subjectId },
-      });
+//     // 1. Jika pelanggan minta langsung ke sales/admin -> langsung lempar ke percakapan (processActiveInterview)
+//     const wantsDirectSales = checkDirectSalesIntent(incomingText);
+//     if (wantsDirectSales && botConfig.subjects.length > 0) {
+//       const defaultSubject = botConfig.subjects[0];
+//       await prisma.botSession.update({
+//         where: {
+//           tenantId_customerPhoneNumber: {
+//             tenantId,
+//             customerPhoneNumber: senderPhone,
+//           },
+//         },
+//         data: { currentNodeId: defaultSubject.subjectId },
+//       });
 
-      return await processActiveInterview(
-        sock,
-        rawJid,
-        tenantId,
-        senderPhone,
-        incomingText,
-        botConfig,
-        defaultSubject,
-      );
-    }
+//       return await processActiveInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         incomingText,
+//         botConfig,
+//         defaultSubject,
+//       );
+//     }
 
-    // 2. Cocokkan pilihan nomor (1, 2, dst.) atau nama layanan persis
-    const numericChoice = parseInt(incomingText, 10);
-    const matchedSubject =
-      botConfig.subjects.find(
-        (s) => s.name.toLowerCase() === incomingText.toLowerCase(),
-      ) ||
-      (!Number.isNaN(numericChoice) &&
-      numericChoice > 0 &&
-      numericChoice <= botConfig.subjects.length
-        ? botConfig.subjects[numericChoice - 1]
-        : null);
+//     // 2. Cocokkan pilihan nomor (1, 2, dst.) atau nama layanan persis
+//     const numericChoice = parseInt(incomingText, 10);
+//     const matchedSubject =
+//       botConfig.subjects.find(
+//         (s) => s.name.toLowerCase() === incomingText.toLowerCase(),
+//       ) ||
+//       (!Number.isNaN(numericChoice) &&
+//       numericChoice > 0 &&
+//       numericChoice <= botConfig.subjects.length
+//         ? botConfig.subjects[numericChoice - 1]
+//         : null);
 
-    if (matchedSubject) {
-      return await startSubjectInterview(
-        sock,
-        rawJid,
-        tenantId,
-        senderPhone,
-        botConfig,
-        matchedSubject,
-      );
-    }
+//     if (matchedSubject) {
+//       return await startSubjectInterview(
+//         sock,
+//         rawJid,
+//         tenantId,
+//         senderPhone,
+//         botConfig,
+//         matchedSubject,
+//       );
+//     }
 
-    // 3. Jika Foto 1 SUDAH dikirim sebelumnya (status "MENU_SENT") dan input tidak dikenal -> kirim Foto 2
-    if (session.currentNodeId === "MENU_SENT") {
-      const menuList = botConfig.subjects
-        .map((s, idx) => `${idx + 1}. *${s.name}*`)
-        .join("\n");
+//     // 3. Jika Foto 1 SUDAH dikirim sebelumnya (status "MENU_SENT") dan input tidak dikenal -> kirim Foto 2
+//     if (session.currentNodeId === "MENU_SENT") {
+//       const menuList = botConfig.subjects
+//         .map((s, idx) => `${idx + 1}. *${s.name}*`)
+//         .join("\n");
 
-      return await sock.sendMessage(rawJid, {
-        text:
-          `Mohon maaf Kak, agar kami dapat menghubungkan ke tim yang tepat, silakan balas dengan *angka* pilihan layanan berikut ya:\n\n` +
-          `${menuList}\n\n` +
-          `_Contoh: balas *1* atau *2*_`,
-      });
-    }
+//       return await sock.sendMessage(rawJid, {
+//         text:
+//           `Mohon maaf Kak, agar kami dapat menghubungkan ke tim yang tepat, silakan balas dengan *angka* pilihan layanan berikut ya:\n\n` +
+//           `${menuList}\n\n` +
+//           `_Contoh: balas *1* atau *2*_`,
+//       });
+//     }
 
-    // 4. Pesan awal apapun (status masih "WELCOME") -> Tandai "MENU_SENT" dan kirim Foto 1
-    await prisma.botSession.update({
-      where: {
-        tenantId_customerPhoneNumber: {
-          tenantId,
-          customerPhoneNumber: senderPhone,
-        },
-      },
-      data: { currentNodeId: "MENU_SENT" },
-    });
+//     // 4. Pesan awal apapun (status masih "WELCOME") -> Tandai "MENU_SENT" dan kirim Foto 1
+//     await prisma.botSession.update({
+//       where: {
+//         tenantId_customerPhoneNumber: {
+//           tenantId,
+//           customerPhoneNumber: senderPhone,
+//         },
+//       },
+//       data: { currentNodeId: "MENU_SENT" },
+//     });
 
-    return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
-  } catch (error) {
-    console.error("🚨 [Bot Handler Error]:", error);
-  }
-}
+//     return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+//   } catch (error) {
+//     console.error("🚨 [Bot Handler Error]:", error);
+//   }
+// }
 
 
 
@@ -689,6 +625,282 @@ async function handleIncomingMessage(sock, msg, tenantId) {
 
 
 // 2. SUB-PROSES A: Memulai wawancara subjek (Bisa dipanggil langsung jika subjek cuma 1, atau setelah pilih menu)
+async function handleIncomingMessage(sock, msg, tenantId) {
+  if (!msg || !msg.message || msg.key.fromMe) return;
+  const rawJid = msg.key.remoteJid;
+  if (!rawJid || rawJid === "status@broadcast") return;
+
+  const cleanJidForPhone =
+    msg.key.remoteJidAlt || msg.key.participant || rawJid;
+  const senderPhone = cleanJidForPhone
+    .split("@")[0]
+    .split(":")[0]
+    .replace(/[^0-9]/g, "");
+
+  const actualMessage = msg.message?.ephemeralMessage?.message || msg.message;
+  const incomingText = (
+    actualMessage?.conversation ||
+    actualMessage?.extendedTextMessage?.text ||
+    ""
+  ).trim();
+
+  if (!incomingText || !senderPhone) return;
+
+  if (rawJid.endsWith("@g.us")) {
+    if (incomingText.toLowerCase() === "!idgrup") {
+      return await sock.sendMessage(rawJid, {
+        text: `🆔 *ID Grup WhatsApp ini:*\n\`${rawJid}\`\n\nSalin ID di atas ke pengaturan Bot CRM Anda.`,
+      });
+    }
+    return;
+  }
+
+  try {
+    console.log(
+      `📩 [SaaS WA] Chat Masuk [Tenant: ${tenantId}] dari [${senderPhone}]: "${incomingText}"`,
+    );
+
+    const botConfig = await prisma.aiBotConfig.findUnique({
+      where: { tenantId },
+      include: {
+        tenant: { include: { products: true } },
+        subjects: { orderBy: { orderIndex: "asc" } },
+      },
+    });
+    if (!botConfig) return;
+
+    // Cek masa aktif paket tenant
+    if (
+      botConfig.tenant.status === "EXPIRED" ||
+      (botConfig.tenant.subscriptionEnd &&
+        new Date() > new Date(botConfig.tenant.subscriptionEnd))
+    ) {
+      if (botConfig.tenant.status !== "EXPIRED") {
+        await prisma.tenant.update({
+          where: { tenantId },
+          data: { status: "EXPIRED" },
+        });
+      }
+      return;
+    }
+
+    let session = await prisma.botSession.findUnique({
+      where: {
+        tenantId_customerPhoneNumber: {
+          tenantId,
+          customerPhoneNumber: senderPhone,
+        },
+      },
+    });
+
+    if (!session) {
+      session = await prisma.botSession.create({
+        data: {
+          tenantId,
+          customerPhoneNumber: senderPhone,
+          currentNodeId: "WELCOME",
+        },
+      });
+    }
+
+    // Auto-reset sesi jika lebih dari 24 jam tidak ada balasan
+    if (session.currentNodeId !== "WELCOME" && session.updatedAt) {
+      const hoursInactive =
+        (Date.now() - new Date(session.updatedAt).getTime()) / (1000 * 60 * 60);
+      if (hoursInactive >= 24) {
+        session = await resetSessionToWelcome(
+          tenantId,
+          senderPhone,
+          "EXPIRED_SESSION",
+        );
+      }
+    }
+
+    // Perintah reset manual oleh pelanggan -> langsung tampilkan menu awal
+    if (["menu", "reset", "batal"].includes(incomingText.toLowerCase())) {
+      await resetSessionToWelcome(tenantId, senderPhone, "CANCELLED");
+      if (botConfig.subjects.length === 1) {
+        const companyIntro = sanitizeDbText(
+          botConfig.openingMessage,
+          `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+        );
+        return await startSubjectInterview(
+          sock,
+          rawJid,
+          tenantId,
+          senderPhone,
+          botConfig,
+          botConfig.subjects[0],
+          companyIntro,
+        );
+      }
+      await prisma.botSession.update({
+        where: {
+          tenantId_customerPhoneNumber: {
+            tenantId,
+            customerPhoneNumber: senderPhone,
+          },
+        },
+        data: { currentNodeId: "MENU_SENT" },
+      });
+      return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+    }
+
+    // Jika sedang di dalam wawancara subjek aktif -> panggil processActiveInterview
+    const activeSubject = botConfig.subjects.find(
+      (s) => s.subjectId === session.currentNodeId,
+    );
+
+    if (activeSubject) {
+      return await processActiveInterview(
+        sock,
+        rawJid,
+        tenantId,
+        senderPhone,
+        incomingText,
+        botConfig,
+        activeSubject,
+      );
+    }
+
+    // Jika subjek hanya ada 1 -> langsung sapa profil perusahaan & mulai pertanyaan pertama tanpa pilih angka 1
+    if (botConfig.subjects.length === 1) {
+      const companyIntro = sanitizeDbText(
+        botConfig.openingMessage,
+        `Halo! Selamat datang di *${botConfig.tenant?.businessName || "Layanan Kami"}*.`,
+      );
+      return await startSubjectInterview(
+        sock,
+        rawJid,
+        tenantId,
+        senderPhone,
+        botConfig,
+        botConfig.subjects[0],
+        companyIntro,
+      );
+    }
+
+    // 1. Jika pelanggan minta langsung ke sales/admin -> langsung lempar ke percakapan (processActiveInterview)
+    const wantsDirectSales = checkDirectSalesIntent(incomingText);
+    if (wantsDirectSales && botConfig.subjects.length > 0) {
+      const defaultSubject = botConfig.subjects[0];
+      await prisma.botSession.update({
+        where: {
+          tenantId_customerPhoneNumber: {
+            tenantId,
+            customerPhoneNumber: senderPhone,
+          },
+        },
+        data: { currentNodeId: defaultSubject.subjectId },
+      });
+
+      return await processActiveInterview(
+        sock,
+        rawJid,
+        tenantId,
+        senderPhone,
+        incomingText,
+        botConfig,
+        defaultSubject,
+      );
+    }
+
+    // 2. Cocokkan pilihan nomor, nama persis, atau kata kunci dinamis dari nama layanan
+    const cleanInput = incomingText.toLowerCase().trim();
+    const numericChoice = parseInt(cleanInput, 10);
+    const stopWords = ["dan", "atau", "yang", "untuk", "di", "ke", "dari"];
+
+    let matchedSubject =
+      // A. Cek angka murni ("1") atau "nomor 1" / "no 1"
+      (!Number.isNaN(numericChoice) &&
+      numericChoice > 0 &&
+      numericChoice <= botConfig.subjects.length
+        ? botConfig.subjects[numericChoice - 1]
+        : null) ||
+      botConfig.subjects.find((s, idx) => {
+        const num = idx + 1;
+        return cleanInput === `nomor ${num}` || cleanInput === `no ${num}`;
+      }) ||
+      // B. Cek nama persis ("info produk" / "konsultasi unit properti")
+      botConfig.subjects.find((s) => s.name.toLowerCase() === cleanInput) ||
+      // C. Cek kata kunci dinamis minimal 4 huruf (misal: "info", "produk", "konsultasi", "komplain")
+      botConfig.subjects.find((s) => {
+        const keywords = s.name
+          .toLowerCase()
+          .split(/[\s&,/()-]+/)
+          .filter((word) => word.length >= 4 && !stopWords.includes(word));
+
+        return keywords.some((word) => cleanInput.includes(word));
+      });
+
+    // 3. Jika belum ketemu DAN menu sudah pernah dikirim ("MENU_SENT"), gunakan AI Mini-Router untuk kalimat bebas
+    if (!matchedSubject && session.currentNodeId === "MENU_SENT") {
+      const menuOptionsText = botConfig.subjects
+        .map((s, idx) => `${idx + 1}. ${s.name}`)
+        .join("\n");
+
+      const aiChoicePrompt =
+        `Tugasmu hanya memilih nomor layanan yang paling sesuai dengan pesan pelanggan.\n` +
+        `Daftar Layanan:\n${menuOptionsText}\n\n` +
+        `Pesan Pelanggan: "${incomingText}"\n\n` +
+        `Balas HANYA dengan satu angka nomor layanan (contoh: 1). Jika pesan pelanggan sama sekali tidak nyambung atau hanya sapaan seperti "halo"/"p", balas dengan angka 0.`;
+
+      try {
+        // ⚠️ SESUAIKAN: Ganti callAiHelper dengan fungsi pemanggil LLM/AI di project kamu
+        const aiRawReply = await callAiHelper(aiChoicePrompt);
+        const aiNumber = parseInt(String(aiRawReply).replace(/[^0-9]/g, ""), 10);
+
+        if (!Number.isNaN(aiNumber) && aiNumber > 0 && aiNumber <= botConfig.subjects.length) {
+          matchedSubject = botConfig.subjects[aiNumber - 1];
+        }
+      } catch (aiErr) {
+        console.error("⚠️ AI Menu Router fallback gagal:", aiErr.message);
+      }
+    }
+
+    // Jika layanan berhasil ditemukan -> mulai sesi wawancara!
+    if (matchedSubject) {
+      return await startSubjectInterview(
+        sock,
+        rawJid,
+        tenantId,
+        senderPhone,
+        botConfig,
+        matchedSubject,
+      );
+    }
+
+    // 4. Jika menu SUDAH dikirim sebelumnya dan input memang tidak relevan -> kirim pengingat pilih menu
+    if (session.currentNodeId === "MENU_SENT") {
+      const menuList = botConfig.subjects
+        .map((s, idx) => `${idx + 1}. *${s.name}*`)
+        .join("\n");
+
+      return await sock.sendMessage(rawJid, {
+        text:
+          `Mohon maaf Kak, agar kami dapat menghubungkan ke tim yang tepat, silakan pilih layanan yang diinginkan ya:\n\n` +
+          `${menuList}\n\n` +
+          `_Contoh: balas *1* atau ketik nama layanannya_`,
+      });
+    }
+
+    // 5. Pesan awal apapun (status masih "WELCOME") -> Tandai "MENU_SENT" dan kirim menu utama
+    await prisma.botSession.update({
+      where: {
+        tenantId_customerPhoneNumber: {
+          tenantId,
+          customerPhoneNumber: senderPhone,
+        },
+      },
+      data: { currentNodeId: "MENU_SENT" },
+    });
+
+    return await sendSubjectMenu(sock, rawJid, botConfig, incomingText);
+  } catch (error) {
+    console.error("🚨 [Bot Handler Error]:", error);
+  }
+}
+
 
 async function startSubjectInterview(
   sock,
