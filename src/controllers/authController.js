@@ -8,6 +8,8 @@ const { activeSockets } = require("../../botMemory");
 const JWT_SECRET = process.env.JWT_SECRET;
 const MASTER_BOT_NUMBER = process.env.MASTER_BOT_NUMBER; // 👈 Diambil dinamis dari .env
 
+const crypto = require("crypto");
+
 /**
  * MIDDLEWARE CHECKPOINT INTERN: Memastikan server memiliki konfigurasi .env yang sah
  */
@@ -100,6 +102,8 @@ function checkEnvConfig(res) {
 //     return res.status(500).json({ success: false, message: "⚠️ Gangguan server internal laptop saat memproses kode token." });
 //   }
 // }
+
+
 async function requestLoginToken(req, res) {
   if (!checkEnvConfig(res)) return; // Validasi .env
 
@@ -113,6 +117,11 @@ async function requestLoginToken(req, res) {
 
     if (cleanPhone.startsWith("0")) {
       cleanPhone = "62" + cleanPhone.substring(1);
+    }
+
+    // Validasi panjang minimal nomor HP standar
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({ success: false, message: "⚠️ Format nomor handphone tidak valid!" });
     }
 
     // Cari user berdasarkan nomor HP di database PostgreSQL
@@ -148,22 +157,23 @@ async function requestLoginToken(req, res) {
       });
     }
 
-    // Acak 6 digit angka token secara acak (Random OTP Generator)
-    const rawToken = Math.floor(100000 + Math.random() * 900000).toString();
+    // 3. Proteksi Rate Limit / Cooldown 60 detik (Anti-Spam Master Bot)
+    // Karena masa berlaku token 5 menit, jika sisa waktu > 4 menit berarti belum 60 detik sejak request terakhir
+    if (user.tokenExpiry) {
+      const timeRemaining = new Date(user.tokenExpiry).getTime() - Date.now();
+      const cooldownThreshold = 4 * 60 * 1000; // 4 menit dalam milidetik
 
-    // Setel waktu kedaluwarsa token 5 menit dari sekarang
-    const expiryTime = new Date();
-    expiryTime.setMinutes(expiryTime.getMinutes() + 5);
+      if (timeRemaining > cooldownThreshold) {
+        const waitSeconds = Math.ceil((timeRemaining - cooldownThreshold) / 1000);
+        return res.status(429).json({
+          success: false,
+          message: `⏳ Kode OTP baru saja dikirim. Silakan tunggu ${waitSeconds} detik sebelum meminta kode ulang.`,
+          retryAfter: waitSeconds, // Opsional: bisa dipakai UI untuk timer hitung mundur otomatis
+        });
+      }
+    }
 
-    await prisma.user.update({
-      where: { userId: user.userId },
-      data: {
-        loginToken: rawToken,
-        tokenExpiry: expiryTime,
-      },
-    });
-
-    // Ambil instance Master Bot
+    // 4. Cek koneksi Master Bot terlebih dahulu sebelum update database
     const masterSock = activeSockets["MASTER_SYSTEM"] || activeSockets[MASTER_BOT_NUMBER];
 
     if (!masterSock) {
@@ -175,6 +185,30 @@ async function requestLoginToken(req, res) {
     }
 
     const targetJid = `${cleanPhone}@s.whatsapp.net`;
+
+    // 5. Pastikan nomor tujuan benar-benar terdaftar di WhatsApp
+    const [waCheck] = await masterSock.onWhatsApp(targetJid);
+    if (!waCheck || !waCheck.exists) {
+      return res.status(400).json({
+        success: false,
+        message: "❌ Nomor ini tidak terdaftar di WhatsApp aktif.",
+      });
+    }
+
+    // 6. Acak 6 digit angka token menggunakan modul crypto (Cryptographically Secure)
+    const rawToken = crypto.randomInt(100000, 1000000).toString();
+
+    // Setel waktu kedaluwarsa token 5 menit dari sekarang
+    const expiryTime = new Date(Date.now() + 5 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { userId: user.userId },
+      data: {
+        loginToken: rawToken,
+        tokenExpiry: expiryTime,
+      },
+    });
+
     const waMessageText =
       `🔐 *KODE VERIFIKASI LOGIN (OTP)* 🔐\n\n` +
       `Halo *${user.name}*,\n` +
@@ -188,6 +222,7 @@ async function requestLoginToken(req, res) {
     return res.status(200).json({
       success: true,
       message: "📩 Kode token verifikasi login berhasil dikirim ke nomor WhatsApp Anda. Silakan periksa chat Anda!",
+      retryAfter: 60, // Info ke frontend bahwa tombol kirim ulang dikunci 60 detik
     });
   } catch (error) {
     console.error("🚨 Eror Request Token Controller:", error);
@@ -197,6 +232,104 @@ async function requestLoginToken(req, res) {
     });
   }
 }
+
+// async function requestLoginToken(req, res) {
+//   if (!checkEnvConfig(res)) return; // Validasi .env
+
+//   try {
+//     const { phoneNumber } = req.body;
+//     if (!phoneNumber) {
+//       return res.status(400).json({ success: false, message: "⚠️ Nomor handphone wajib diisi!" });
+//     }
+
+//     let cleanPhone = phoneNumber.replace(/[^0-9]/g, "");
+
+//     if (cleanPhone.startsWith("0")) {
+//       cleanPhone = "62" + cleanPhone.substring(1);
+//     }
+
+//     // Cari user berdasarkan nomor HP di database PostgreSQL
+//     const user = await prisma.user.findUnique({
+//       where: { phoneNumber: cleanPhone },
+//       include: { tenant: true },
+//     });
+
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "❌ Nomor HP Anda belum terdaftar di sistem bisnis mana pun.",
+//       });
+//     }
+
+//     // 1. Blokir jika akun user/sales dinonaktifkan oleh Owner (isActive: false)
+//     if (user.isActive === false) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "⛔ Akun Anda sedang dinonaktifkan oleh Owner bisnis Anda. Hubungi Owner untuk mengaktifkan kembali.",
+//       });
+//     }
+
+//     // 2. Cek masa aktif langganan: OWNER/ADMIN tetap boleh masuk untuk perpanjangan, hanya SALES yang diblokir
+//     const isTenantExpired =
+//       user.tenant.status === "EXPIRED" ||
+//       (user.tenant.subscriptionEnd && new Date() > new Date(user.tenant.subscriptionEnd));
+
+//     if (isTenantExpired && user.role === "SALES") {
+//       return res.status(403).json({
+//         success: false,
+//         message: "🔒 Masa aktif paket bisnis Anda telah berakhir. Silakan hubungi Owner untuk melakukan perpanjangan paket.",
+//       });
+//     }
+
+//     // Acak 6 digit angka token secara acak (Random OTP Generator)
+//     const rawToken = Math.floor(100000 + Math.random() * 900000).toString();
+
+//     // Setel waktu kedaluwarsa token 5 menit dari sekarang
+//     const expiryTime = new Date();
+//     expiryTime.setMinutes(expiryTime.getMinutes() + 5);
+
+//     await prisma.user.update({
+//       where: { userId: user.userId },
+//       data: {
+//         loginToken: rawToken,
+//         tokenExpiry: expiryTime,
+//       },
+//     });
+
+//     // Ambil instance Master Bot
+//     const masterSock = activeSockets["MASTER_SYSTEM"] || activeSockets[MASTER_BOT_NUMBER];
+
+//     if (!masterSock) {
+//       console.error(`🚨 Gagal mengirim WA: Perangkat Master Bot (+${MASTER_BOT_NUMBER}) belum online!`);
+//       return res.status(500).json({
+//         success: false,
+//         message: "⚠️ Server gagal menghubungkan layanan WhatsApp Bot Utama. Coba sesaat lagi.",
+//       });
+//     }
+
+//     const targetJid = `${cleanPhone}@s.whatsapp.net`;
+//     const waMessageText =
+//       `🔐 *KODE VERIFIKASI LOGIN (OTP)* 🔐\n\n` +
+//       `Halo *${user.name}*,\n` +
+//       `Berikut adalah kode token verifikasi untuk masuk ke Aplikasi CRM Anda:\n\n` +
+//       `👉   *${rawToken}*   👈\n\n` +
+//       `⚠️ *Jangan bagikan kode ini kepada siapa pun!* Kode token ini otomatis hangus dalam waktu 5 menit.`;
+
+//     // Tembak pesan WhatsApp langsung dari server
+//     await masterSock.sendMessage(targetJid, { text: waMessageText });
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "📩 Kode token verifikasi login berhasil dikirim ke nomor WhatsApp Anda. Silakan periksa chat Anda!",
+//     });
+//   } catch (error) {
+//     console.error("🚨 Eror Request Token Controller:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "⚠️ Gangguan server internal saat memproses kode token.",
+//     });
+//   }
+// }
 
 
 /**
